@@ -1,3 +1,40 @@
+/**
+ * POST /api/payment/check-status
+ *
+ * Checks the HitPay payment status and records completed payments in Stripe.
+ *
+ * This endpoint is polled by the frontend every few seconds after displaying
+ * a PayNow QR code. When the payment is completed:
+ * 1. Creates a Stripe PaymentMethod with the custom payment type
+ * 2. Records the payment via Stripe's Payment Records API
+ * 3. Updates the PaymentIntent metadata for reference
+ *
+ * Idempotency: If the payment has already been recorded (checked via
+ * PaymentIntent metadata), returns the existing record without creating duplicates.
+ *
+ * Error Recovery: If Stripe recording fails but HitPay confirms payment,
+ * still returns success since the customer has paid. The error is logged
+ * for manual reconciliation.
+ *
+ * @example Request
+ * ```json
+ * {
+ *   "paymentIntentId": "pi_xxx",
+ *   "hitpayPaymentRequestId": "abc123",
+ *   "customPaymentMethodTypeId": "cpmt_xxx"  // Optional
+ * }
+ * ```
+ *
+ * @example Response (completed)
+ * ```json
+ * {
+ *   "status": "completed",
+ *   "hitpay": { "id": "abc123", "status": "completed", ... },
+ *   "stripe": { "paymentRecordId": "prec_xxx", "paymentIntentId": "pi_xxx" },
+ *   "message": "Payment confirmed and recorded successfully"
+ * }
+ * ```
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import { getHitPayPaymentStatus } from '@/lib/hitpay';
 import { stripe } from '@/lib/stripe';
@@ -9,11 +46,40 @@ const CPM_TYPE_ID = process.env.NEXT_PUBLIC_CPM_TYPE_ID || 'cpmt_xxx';
 
 export async function POST(request: NextRequest) {
   try {
-    const { paymentIntentId, hitpayPaymentRequestId, customPaymentMethodTypeId } = await request.json();
+    const body = await request.json();
+    const {
+      paymentIntentId,
+      hitpayPaymentRequestId,
+      customPaymentMethodTypeId,
+    } = body;
 
-    if (!paymentIntentId || !hitpayPaymentRequestId) {
+    // Validation with helpful error messages
+    if (!paymentIntentId) {
       return NextResponse.json(
-        { error: 'Payment intent ID and HitPay payment request ID are required' },
+        {
+          error: 'paymentIntentId is required',
+          hint: 'Pass the Stripe PaymentIntent ID from the checkout session',
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!paymentIntentId.startsWith('pi_')) {
+      return NextResponse.json(
+        {
+          error: 'Invalid paymentIntentId format',
+          hint: 'PaymentIntent IDs start with "pi_"',
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!hitpayPaymentRequestId) {
+      return NextResponse.json(
+        {
+          error: 'hitpayPaymentRequestId is required',
+          hint: 'Pass the HitPay payment request ID from when the QR was created',
+        },
         { status: 400 }
       );
     }
@@ -21,8 +87,10 @@ export async function POST(request: NextRequest) {
     // Use the provided CPM Type ID or fall back to env variable
     const cpmTypeId = customPaymentMethodTypeId || CPM_TYPE_ID;
 
-    // Step 1: Check HitPay payment status from server
-    console.log(`[Payment Check] Checking HitPay status for: ${hitpayPaymentRequestId}`);
+    // Step 1: Check HitPay payment status
+    console.log(
+      `[Payment Check] Checking HitPay status for: ${hitpayPaymentRequestId}`
+    );
     const hitpayStatus = await getHitPayPaymentStatus(hitpayPaymentRequestId);
 
     console.log(`[Payment Check] HitPay status: ${hitpayStatus.status}`);
@@ -33,11 +101,14 @@ export async function POST(request: NextRequest) {
 
       try {
         // Get the PaymentIntent
-        const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        const paymentIntent =
+          await stripe.paymentIntents.retrieve(paymentIntentId);
 
         // Idempotency check: If we already recorded this payment, return existing record
         if (paymentIntent.metadata?.stripe_payment_record_id) {
-          console.log(`[Payment Check] Payment already recorded: ${paymentIntent.metadata.stripe_payment_record_id}`);
+          console.log(
+            `[Payment Check] Payment already recorded: ${paymentIntent.metadata.stripe_payment_record_id}`
+          );
           return NextResponse.json({
             status: 'completed',
             hitpay: {
@@ -64,7 +135,8 @@ export async function POST(request: NextRequest) {
 
         console.log(`[Payment Check] Created PaymentMethod: ${paymentMethod.id}`);
 
-        // Step 2b: Report the payment to Stripe using Payment Record API
+        // Step 2b: Report the payment to Stripe using Payment Records API
+        // This creates a payment record that shows in the Stripe Dashboard
         const paymentRecord = await stripe.paymentRecords.reportPayment({
           amount_requested: {
             value: paymentIntent.amount,
@@ -90,12 +162,15 @@ export async function POST(request: NextRequest) {
             hitpay_reference: hitpayStatus.reference_number || '',
             stripe_payment_intent_id: paymentIntentId,
             stripe_payment_method_id: paymentMethod.id,
+            recorded_via: 'polling',
           },
         });
 
-        console.log(`[Payment Check] Stripe payment record created: ${paymentRecord.id}`);
+        console.log(
+          `[Payment Check] Stripe payment record created: ${paymentRecord.id}`
+        );
 
-        // Also update the PaymentIntent metadata for easy reference
+        // Step 2c: Update PaymentIntent metadata for easy reference
         await stripe.paymentIntents.update(paymentIntentId, {
           metadata: {
             external_payment_provider: 'hitpay',
@@ -103,6 +178,7 @@ export async function POST(request: NextRequest) {
             external_payment_status: 'completed',
             stripe_payment_record_id: paymentRecord.id,
             stripe_payment_method_id: paymentMethod.id,
+            recorded_via: 'polling',
           },
         });
 
@@ -122,20 +198,28 @@ export async function POST(request: NextRequest) {
         });
       } catch (stripeError: unknown) {
         // If Stripe recording fails, still return success since HitPay payment succeeded
+        // The customer has paid - we just failed to record it in Stripe
         console.error('[Payment Check] Stripe recording error:', stripeError);
 
         // Update metadata even if payment record creation fails
+        // This helps with manual reconciliation
         try {
           await stripe.paymentIntents.update(paymentIntentId, {
             metadata: {
               external_payment_provider: 'hitpay',
               external_payment_id: hitpayPaymentRequestId,
               external_payment_status: 'completed',
-              stripe_recording_error: stripeError instanceof Error ? stripeError.message : 'Unknown error',
+              stripe_recording_error:
+                stripeError instanceof Error
+                  ? stripeError.message
+                  : 'Unknown error',
             },
           });
         } catch (metadataError) {
-          console.error('[Payment Check] Failed to update metadata:', metadataError);
+          console.error(
+            '[Payment Check] Failed to update metadata:',
+            metadataError
+          );
         }
 
         return NextResponse.json({
@@ -148,14 +232,15 @@ export async function POST(request: NextRequest) {
           },
           stripe: {
             paymentIntentId: paymentIntentId,
-            recordingError: 'Failed to create Stripe payment record, but HitPay payment succeeded',
+            recordingError:
+              'Failed to create Stripe payment record, but HitPay payment succeeded',
           },
           message: 'Payment confirmed (Stripe recording pending)',
         });
       }
     }
 
-    // Payment still pending or failed
+    // Payment still pending or failed/expired
     return NextResponse.json({
       status: hitpayStatus.status,
       hitpay: {
@@ -168,7 +253,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[Payment Check] Error:', error);
     return NextResponse.json(
-      { error: 'Failed to check payment status', details: error instanceof Error ? error.message : 'Unknown error' },
+      {
+        error: 'Failed to check payment status',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      },
       { status: 500 }
     );
   }

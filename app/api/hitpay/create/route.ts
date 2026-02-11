@@ -1,13 +1,87 @@
+/**
+ * POST /api/hitpay/create
+ *
+ * Creates a HitPay payment request with QR code for various payment methods.
+ *
+ * This endpoint is called when the user selects a custom payment method
+ * (e.g., PayNow, ShopeePay) in the Stripe Payment Element. It generates a
+ * QR code that the user can scan to complete the payment.
+ *
+ * The referenceNumber should be the Stripe PaymentIntent ID to link the
+ * HitPay payment back to Stripe for recording.
+ *
+ * @example Request
+ * ```json
+ * {
+ *   "amount": 1999,                    // Amount in cents
+ *   "currency": "sgd",                 // Optional, defaults to "sgd"
+ *   "referenceNumber": "pi_xxx",       // Stripe PaymentIntent ID
+ *   "paymentMethod": "paynow_online"   // HitPay payment method
+ * }
+ * ```
+ *
+ * @example Response
+ * ```json
+ * {
+ *   "paymentRequestId": "abc123",
+ *   "qrCode": "data:image/png;base64,...",
+ *   "qrCodeExpiry": "2024-01-01T12:00:00Z",
+ *   "status": "pending",
+ *   "checkoutUrl": "https://hit-pay.com/checkout/..."
+ * }
+ * ```
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import { createHitPayPaymentRequest } from '@/lib/hitpay';
 
+// Default payment method if none specified
+const DEFAULT_PAYMENT_METHOD = 'paynow_online';
+
 export async function POST(request: NextRequest) {
   try {
-    const { amount, currency = 'sgd', referenceNumber } = await request.json();
+    const body = await request.json();
+    const { amount, currency = 'sgd', referenceNumber, paymentMethod } = body;
 
-    if (!amount || amount <= 0) {
+    // Use the provided payment method or fall back to default
+    const hitpayPaymentMethod = paymentMethod || DEFAULT_PAYMENT_METHOD;
+
+    // Validation with helpful error messages
+    if (amount === undefined || amount === null) {
       return NextResponse.json(
-        { error: 'Invalid amount' },
+        {
+          error: 'Amount is required',
+          hint: 'Provide amount in cents (e.g., 1000 for $10.00)',
+        },
+        { status: 400 }
+      );
+    }
+
+    if (typeof amount !== 'number' || amount <= 0) {
+      return NextResponse.json(
+        { error: 'Amount must be a positive number' },
+        { status: 400 }
+      );
+    }
+
+    // HitPay/PayNow has minimum payment amounts
+    if (amount < 100) {
+      return NextResponse.json(
+        {
+          error: 'Minimum payment amount is $1.00',
+          hint: 'PayNow requires a minimum of 100 cents ($1.00)',
+        },
+        { status: 400 }
+      );
+    }
+
+    // Currency validation - SGD is the primary supported currency
+    const supportedCurrencies = ['sgd'];
+    if (!supportedCurrencies.includes(currency.toLowerCase())) {
+      return NextResponse.json(
+        {
+          error: `Currency "${currency}" is not supported`,
+          hint: `This payment method only supports: ${supportedCurrencies.join(', ').toUpperCase()}`,
+        },
         { status: 400 }
       );
     }
@@ -15,16 +89,20 @@ export async function POST(request: NextRequest) {
     // Convert cents to dollars for HitPay (HitPay expects decimal amount)
     const amountInDollars = (amount / 100).toFixed(2);
 
+    // Create the HitPay payment request
+    // The reference_number links this payment to the Stripe PaymentIntent
+    console.log(`[HitPay] Creating payment request with method: ${hitpayPaymentMethod}`);
+
     const paymentRequest = await createHitPayPaymentRequest({
       amount: amountInDollars,
       currency: currency.toLowerCase(),
-      payment_methods: ['paynow_online'],
+      payment_methods: [hitpayPaymentMethod],
       generate_qr: true,
       purpose: 'TechStore Purchase',
       reference_number: referenceNumber || `ORDER-${Date.now()}`,
     });
 
-    console.log(`[HitPay] Created payment request: ${paymentRequest.id}`);
+    console.log(`[HitPay] Created payment request: ${paymentRequest.id} (method: ${hitpayPaymentMethod})`);
 
     return NextResponse.json({
       paymentRequestId: paymentRequest.id,
@@ -35,6 +113,30 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Error creating HitPay payment request:', error);
+
+    // Provide more context for HitPay-specific errors
+    if (error instanceof Error) {
+      if (error.message.includes('HITPAY_API_KEY')) {
+        return NextResponse.json(
+          {
+            error: 'HitPay configuration error',
+            hint: 'Check that HITPAY_API_KEY is set correctly in .env.local',
+          },
+          { status: 500 }
+        );
+      }
+
+      if (error.message.includes('HitPay API error')) {
+        return NextResponse.json(
+          {
+            error: 'HitPay API error',
+            details: error.message,
+          },
+          { status: 500 }
+        );
+      }
+    }
+
     return NextResponse.json(
       { error: 'Failed to create payment request' },
       { status: 500 }

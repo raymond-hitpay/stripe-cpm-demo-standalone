@@ -1,3 +1,29 @@
+/**
+ * Checkout Page - Integrates Stripe Elements with Custom Payment Methods.
+ *
+ * This page demonstrates how to set up Stripe Elements with a Custom Payment
+ * Method Type (CPM) for HitPay PayNow integration.
+ *
+ * Key Concepts:
+ *
+ * 1. **Custom Payment Methods are client-side configured**
+ *    Unlike regular payment methods, CPM types are NOT set via payment_method_types
+ *    in PaymentIntent. They are configured via the customPaymentMethods option in
+ *    the Elements provider.
+ *
+ * 2. **Beta flag required**
+ *    Stripe.js must be loaded with the 'custom_payment_methods_beta_1' beta flag
+ *    (see /lib/stripe-client.ts).
+ *
+ * 3. **CPM Type ID**
+ *    You must create a Custom Payment Method Type in your Stripe Dashboard and
+ *    use its ID (cpmt_xxx) here. The PayNow option won't appear if the ID is
+ *    invalid or the CPM type is not enabled.
+ *
+ * @see https://docs.stripe.com/custom-payment-methods/quickstart
+ * @see /lib/stripe-client.ts - Stripe.js loader with beta flag
+ * @see /components/CheckoutForm.tsx - Payment form with QR code handling
+ */
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
@@ -7,9 +33,11 @@ import { stripePromise } from '@/lib/stripe-client';
 import { CheckoutForm } from '@/components/CheckoutForm';
 import Link from 'next/link';
 import Image from 'next/image';
+import { CUSTOM_PAYMENT_METHODS, getAllCpmTypeIds } from '@/config/payment-methods';
 
-// Custom Payment Method Type ID - configure this in your Stripe Dashboard
-const CPM_TYPE_ID = process.env.NEXT_PUBLIC_CPM_TYPE_ID || 'cpmt_xxx';
+// =============================================================================
+// COMPONENT
+// =============================================================================
 
 export default function CheckoutPage() {
   const [mounted, setMounted] = useState(false);
@@ -17,7 +45,6 @@ export default function CheckoutPage() {
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [embedContainer, setEmbedContainer] = useState<HTMLElement | null>(null);
 
   const { items, getTotal } = useCartStore();
 
@@ -28,7 +55,12 @@ export default function CheckoutPage() {
     setMounted(true);
   }, []);
 
-  // Create payment when mounted
+  /**
+   * Effect: Create PaymentIntent when the page loads.
+   *
+   * Uses a ref to prevent duplicate API calls in React StrictMode,
+   * which runs effects twice in development.
+   */
   useEffect(() => {
     if (!mounted || items.length === 0) {
       setIsLoading(false);
@@ -80,6 +112,7 @@ export default function CheckoutPage() {
     }).format(price / 100);
   };
 
+  // Show loading spinner until client-side hydration completes
   if (!mounted) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -88,6 +121,7 @@ export default function CheckoutPage() {
     );
   }
 
+  // Empty cart state
   if (items.length === 0) {
     return (
       <div className="text-center py-16">
@@ -122,9 +156,7 @@ export default function CheckoutPage() {
     return (
       <div className="max-w-lg mx-auto text-center py-16">
         <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-          <h2 className="text-xl font-semibold text-red-900">
-            Checkout Error
-          </h2>
+          <h2 className="text-xl font-semibold text-red-900">Checkout Error</h2>
           <p className="mt-2 text-red-600">{error}</p>
           <Link
             href="/"
@@ -137,27 +169,37 @@ export default function CheckoutPage() {
     );
   }
 
-  // Elements options with custom payment methods
+  /**
+   * Elements options with Custom Payment Methods configuration.
+   *
+   * The customPaymentMethods array configures which CPM types to show
+   * in the Payment Element. Each entry needs:
+   * - id: The CPM Type ID from Stripe Dashboard
+   * - options.type: 'static' (placeholder) or 'embedded' (custom content)
+   *
+   * The 'static' type shows a placeholder with the CPM's configured display name.
+   * The 'embedded' type allows custom content but requires Stripe approval.
+   *
+   * Note: We use 'as any' because the customPaymentMethods property is part of
+   * a beta API and may not be in the official TypeScript definitions yet.
+   */
+  const cpmTypeIds = getAllCpmTypeIds();
   const elementsOptions = clientSecret
     ? {
         clientSecret,
         appearance: {
           theme: 'stripe' as const,
         },
-        customPaymentMethods: [
-          {
-            id: CPM_TYPE_ID,
-            options: {
-              type: 'embedded',
-              onContainerMounted: (container: HTMLElement) => {
-                setEmbedContainer(container);
-              },
-              onContainerUnmounted: () => {
-                setEmbedContainer(null);
-              },
-            },
+        // Configure all Custom Payment Methods to show in Payment Element
+        customPaymentMethods: CUSTOM_PAYMENT_METHODS.map((pm) => ({
+          id: pm.id,
+          options: {
+            // 'static' shows placeholder text; 'embedded' allows custom content
+            type: 'static' as const,
           },
-        ],
+        })),
+        // Show custom payment methods first, then card
+        paymentMethodOrder: [...cpmTypeIds, 'card'],
       }
     : null;
 
@@ -225,18 +267,16 @@ export default function CheckoutPage() {
               Payment Method
             </h2>
 
-            {/* Stripe Payment Element */}
+            {/* Stripe Elements with Custom Payment Methods */}
             {clientSecret && paymentIntentId && stripePromise && elementsOptions && (
               <Elements
                 stripe={stripePromise}
-                options={elementsOptions as any}
-                key={paymentIntentId}
+                options={elementsOptions as any} // Type assertion for beta API
+                key={paymentIntentId} // Re-mount on new PaymentIntent
               >
                 <CheckoutForm
                   amount={getTotal()}
                   paymentIntentId={paymentIntentId}
-                  customPaymentMethodTypeId={CPM_TYPE_ID}
-                  embedContainer={embedContainer}
                 />
               </Elements>
             )}
