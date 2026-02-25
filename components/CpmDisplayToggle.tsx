@@ -99,7 +99,7 @@ export function CpmDisplayToggle({
             <span>Standard</span>
           </div>
           <p className="text-xs font-normal mt-0.5 opacity-75">
-            CPM outside payment element
+            CPM outside Payment Element
           </p>
         </button>
       </div>
