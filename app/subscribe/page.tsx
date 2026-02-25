@@ -24,8 +24,8 @@ import { Product } from '@/lib/store';
 import Link from 'next/link';
 import Image from 'next/image';
 import {
-  getSubscriptionCpms,
-  getSubscriptionCpmTypeIds,
+  getOneTimeCpms,
+  getOneTimeCpmTypeIds,
   getAutoChargeCpms,
   getAutoChargeCpmTypeIds,
 } from '@/config/payment-methods';
@@ -290,15 +290,16 @@ function SubscribeContent() {
     );
   }
 
-  // Elements options for Stripe with Custom Payment Methods (subscription-enabled only)
-  const subscriptionCpms = getSubscriptionCpms();
-  const subscriptionCpmTypeIds = getSubscriptionCpmTypeIds();
+  // Elements options for Stripe with Custom Payment Methods (one-time payment methods for out-of-band billing)
+  const oneTimeCpms = getOneTimeCpms();
+  const oneTimeCpmTypeIds = getOneTimeCpmTypeIds();
 
   /**
    * Build customPaymentMethods config based on display type.
+   * Uses one-time CPMs for out-of-band billing (pay each invoice).
    */
   const buildSubscriptionCpmConfig = () => {
-    return subscriptionCpms.map((pm) => {
+    return oneTimeCpms.map((pm) => {
       if (displayType === 'embedded') {
         return {
           id: pm.id,
@@ -335,10 +336,10 @@ function SubscribeContent() {
         appearance: {
           theme: 'stripe' as const,
         },
-        // Configure subscription-enabled Custom Payment Methods to show in Payment Element
+        // Configure one-time Custom Payment Methods for out-of-band billing
         customPaymentMethods: buildSubscriptionCpmConfig(),
         // Show custom payment methods first, then card
-        paymentMethodOrder: [...subscriptionCpmTypeIds, 'card'],
+        paymentMethodOrder: [...oneTimeCpmTypeIds, 'card'],
       }
     : null;
 

@@ -218,11 +218,20 @@ export async function chargeInvoiceInternal(
       paymentMethodId = paymentMethod.id;
       console.log(`${logPrefix} Created PaymentMethod: ${paymentMethodId}`);
 
+      // Attach PaymentMethod to customer
+      await stripeClover.paymentMethods.attach(paymentMethod.id, {
+        customer: customer.id,
+      });
+      console.log(`${logPrefix} Attached PaymentMethod to customer: ${customer.id}`);
+
       // Record the payment via Payment Records API
       const paymentRecord = await stripeClover.paymentRecords.reportPayment({
         amount_requested: {
           value: invoice.amount_due,
           currency: invoice.currency,
+        },
+        customer_details: {
+          customer: customer.id,
         },
         payment_method_details: {
           payment_method: paymentMethod.id,
@@ -250,29 +259,25 @@ export async function chargeInvoiceInternal(
 
       paymentRecordId = paymentRecord.id;
       console.log(`${logPrefix} Created Payment Record: ${paymentRecordId}`);
+
+      // Attach payment record to invoice - this marks invoice as paid & activates subscription
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (stripeClover.invoices as any).attachPayment(invoiceId, {
+        payment_record: paymentRecord.id,
+      });
+      console.log(`${logPrefix} Attached Payment Record to invoice: ${invoiceId}`);
     } catch (recordError) {
-      // Log but continue - we still want to mark the invoice as paid
+      // Log but continue - payment was still processed
       console.error(`${logPrefix} Payment record error (continuing):`, recordError);
     }
   }
 
-  // Step 6: Mark invoice as paid
-  // Use the custom PaymentMethod if available to avoid creating a duplicate "Paid out of band" record
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let paidInvoice: any;
-  if (paymentMethodId) {
-    // Pay with the custom PaymentMethod - this links the payment to our CPM
-    paidInvoice = await stripeStandard.invoices.pay(invoiceId, {
-      payment_method: paymentMethodId,
-    });
-  } else {
-    // Fallback to paid_out_of_band if no PaymentMethod was created
-    paidInvoice = await stripeStandard.invoices.pay(invoiceId, {
-      paid_out_of_band: true,
-    });
-  }
+  // Step 6: For auto-charge subscriptions, the Payment Record is sufficient
+  // DO NOT call invoices.pay({ paid_out_of_band: true }) - that creates a duplicate payment record
+  // The Payment Records API handles payment tracking for auto-charge subscriptions
+  // (paid_out_of_band is only for "Pay Each Invoice" subscriptions in /api/subscription/pay-invoice)
 
-  console.log(`${logPrefix} Invoice paid: ${paidInvoice.id}`);
+  console.log(`${logPrefix} Payment recorded via Payment Records API`);
 
   // Update invoice metadata
   await stripeStandard.invoices.update(invoiceId, {
@@ -289,22 +294,25 @@ export async function chargeInvoiceInternal(
   });
 
   // Get subscription status
-  const subscription = paidInvoice.subscription
-    ? await stripeStandard.subscriptions.retrieve(paidInvoice.subscription as string)
+  const subscriptionId = invoice.subscription
+    ? (typeof invoice.subscription === 'string' ? invoice.subscription : (invoice.subscription as Stripe.Subscription).id)
+    : null;
+  const subscription = subscriptionId
+    ? await stripeStandard.subscriptions.retrieve(subscriptionId)
     : null;
 
   return {
     success: true,
-    invoiceId: paidInvoice.id,
-    invoiceStatus: paidInvoice.status,
-    subscriptionId: paidInvoice.subscription,
+    invoiceId: invoice.id,
+    invoiceStatus: invoice.status,
+    subscriptionId,
     subscriptionStatus: subscription?.status || 'unknown',
     hitpayPaymentId: hitpayCharge.payment_id,
     amount: amountToCharge,
     currency,
     paymentRecordId,
     paymentMethodId,
-    message: 'Invoice charged and paid successfully',
+    message: 'Invoice charged and payment recorded successfully',
   };
 }
 

@@ -17,14 +17,16 @@
  * - hitpayMethod: The HitPay payment method identifier (see list below)
  * - hitpayRecurringMethod: (Optional) HitPay method for recurring billing if different
  * - displayName: Human-readable name shown in UI and logs
+ * - supportsOneTime: Whether this method supports one-time payments (shop + out-of-band invoices)
  * - chargeAutomatically: Whether this method supports auto-charge subscriptions
  *
- * SUBSCRIPTION BILLING TYPES:
- * ---------------------------
- * 1. Out-of-Band Invoices: User pays each invoice manually (all CPMs support this)
- * 2. Auto-Charge (Own Processor): HitPay charges saved payment method automatically
- *    - Only CPMs with chargeAutomatically: true support this
- *    - Requires HitPay tokenization (cards, ShopeePay, GrabPay)
+ * PAYMENT SCENARIOS:
+ * ------------------
+ * 1. Shop Checkout (one-time): Uses CPMs with supportsOneTime: true
+ * 2. Out-of-Band Invoices: Uses CPMs with supportsOneTime: true (user pays each invoice)
+ * 3. Auto-Charge Subscriptions: Uses CPMs with chargeAutomatically: true
+ *    - HitPay tokenizes and charges saved payment method automatically
+ *    - Requires HitPay tokenization support (cards, ShopeePay, GrabPay)
  */
 
 export interface CustomPaymentMethodConfig {
@@ -36,10 +38,8 @@ export interface CustomPaymentMethodConfig {
   hitpayRecurringMethod?: string;
   /** Display name for logs and debugging */
   displayName: string;
-  /** Whether this method supports one-time payments */
+  /** Whether this method supports one-time payments (shop checkout + out-of-band subscription invoices) */
   supportsOneTime: boolean;
-  /** Whether this method supports subscriptions */
-  supportsSubscription: boolean;
   /** Whether this method supports auto-charge subscriptions via HitPay tokenization */
   chargeAutomatically: boolean;
 }
@@ -105,25 +105,22 @@ export const CUSTOM_PAYMENT_METHODS: CustomPaymentMethodConfig[] = [
     id: 'cpmt_1SnWg7H0EH9sk7Na3BI20zou',
     hitpayMethod: 'paynow_online',
     displayName: 'PayNow',
-    supportsOneTime: true,
-    supportsSubscription: false,
-    chargeAutomatically: false, // QR-based, no tokenization support
+    supportsOneTime: true,       // Shop checkout + out-of-band invoices
+    chargeAutomatically: false,  // QR-based, no tokenization support
   },
   {
     id: 'cpmt_1SrU7yH0EH9sk7Nau7jdZbFp',
     hitpayMethod: 'shopee_pay',
     displayName: 'ShopeePay',
-    supportsOneTime: true,
-    supportsSubscription: false,
-    chargeAutomatically: false, // QR-based, no tokenization support
+    supportsOneTime: true,       // Shop checkout + out-of-band invoices
+    chargeAutomatically: false,  // QR-based, no tokenization support
   },
   {
     id: 'cpmt_1T4caMH0EH9sk7Na1F8yoeOy',
     hitpayMethod: 'card',
     displayName: 'Cards (by HitPay)',
-    supportsOneTime: false,
-    supportsSubscription: true,
-    chargeAutomatically: true, // Supports save & charge via HitPay tokenization
+    supportsOneTime: false,      // Not for one-time payments
+    chargeAutomatically: true,   // Supports save & charge via HitPay tokenization
   }
 
 
@@ -135,9 +132,8 @@ export const CUSTOM_PAYMENT_METHODS: CustomPaymentMethodConfig[] = [
   //   hitpayMethod: 'grabpay',
   //   hitpayRecurringMethod: 'grabpay_direct',
   //   displayName: 'GrabPay',
-  //   supportsOneTime: true,
-  //   supportsSubscription: true,
-  //   chargeAutomatically: true,
+  //   supportsOneTime: true,      // Shop checkout + out-of-band invoices
+  //   chargeAutomatically: true,  // Supports auto-charge subscriptions
   // },
 ];
 
@@ -226,16 +222,3 @@ export function getOneTimeCpmTypeIds(): string[] {
   return getOneTimeCpms().map((pm) => pm.id);
 }
 
-/**
- * Get CPMs that support subscriptions
- */
-export function getSubscriptionCpms(): CustomPaymentMethodConfig[] {
-  return CUSTOM_PAYMENT_METHODS.filter((pm) => pm.supportsSubscription);
-}
-
-/**
- * Get CPM Type IDs for subscriptions
- */
-export function getSubscriptionCpmTypeIds(): string[] {
-  return getSubscriptionCpms().map((pm) => pm.id);
-}

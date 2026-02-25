@@ -2,21 +2,21 @@
  * POST /api/subscription/pay-invoice
  *
  * Marks a Stripe invoice as paid after HitPay payment completes.
- * Creates a PaymentMethod with the CPM type and records via Payment Records API
- * before marking the invoice as paid.
+ * Uses the out-of-band approach for "Pay Each Invoice" subscriptions.
+ *
+ * Note: This endpoint does NOT use Payment Records API - that's for auto-charge only.
+ * Per Stripe docs, out-of-band marks invoices as paid without creating payment records.
  *
  * @example Request
  * ```json
  * {
  *   "invoiceId": "in_xxx",
- *   "hitpayPaymentId": "abc123",
- *   "customPaymentMethodTypeId": "cpmt_xxx"
+ *   "hitpayPaymentId": "abc123"
  * }
  * ```
  */
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { stripe as stripeClover } from '@/lib/stripe';
 
 // Standard Stripe client for invoice/subscription operations
 const stripeStandard = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -83,61 +83,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let paymentRecordId: string | null = null;
-    let paymentMethodId: string | null = null;
-
-    // If CPM type ID is provided, create PaymentMethod and Payment Record
-    if (customPaymentMethodTypeId && hitpayPaymentId) {
-      try {
-        console.log(`[Pay Invoice] Creating PaymentMethod with CPM type: ${customPaymentMethodTypeId}`);
-
-        // Step 1: Create PaymentMethod with custom type (using clover API)
-        const paymentMethod = await stripeClover.paymentMethods.create({
-          type: 'custom',
-          custom: {
-            type: customPaymentMethodTypeId,
-          },
-        });
-
-        paymentMethodId = paymentMethod.id;
-        console.log(`[Pay Invoice] Created PaymentMethod: ${paymentMethodId}`);
-
-        // Step 2: Record the payment via Payment Records API (using clover API)
-        const paymentRecord = await stripeClover.paymentRecords.reportPayment({
-          amount_requested: {
-            value: invoice.amount_due,
-            currency: invoice.currency,
-          },
-          payment_method_details: {
-            payment_method: paymentMethod.id,
-          },
-          processor_details: {
-            type: 'custom',
-            custom: {
-              payment_reference: hitpayPaymentId,
-            },
-          },
-          initiated_at: Math.floor(Date.now() / 1000),
-          customer_presence: 'on_session',
-          outcome: 'guaranteed',
-          guaranteed: {
-            guaranteed_at: Math.floor(Date.now() / 1000),
-          },
-          metadata: {
-            hitpay_payment_id: hitpayPaymentId,
-            stripe_invoice_id: invoiceId,
-            subscription_id: invoice.subscription as string || '',
-            recorded_via: 'subscription_cpm',
-          },
-        });
-
-        paymentRecordId = paymentRecord.id;
-        console.log(`[Pay Invoice] Created Payment Record: ${paymentRecordId}`);
-      } catch (cpmError) {
-        // Log but continue - we still want to mark the invoice as paid
-        console.error('[Pay Invoice] CPM recording error (continuing):', cpmError);
-      }
-    }
+    // For "Pay Each Invoice" flow, we only use paid_out_of_band
+    // DO NOT use Payment Records API - that's for auto-charge subscriptions only
+    // Per Stripe docs: out-of-band approach marks invoices as paid without creating payment records
 
     // Mark the invoice as paid out of band
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -151,10 +99,8 @@ export async function POST(request: NextRequest) {
     await stripeStandard.invoices.update(invoiceId, {
       metadata: {
         hitpay_payment_id: hitpayPaymentId || '',
-        payment_method: 'hitpay_cpm',
+        payment_method: 'hitpay_out_of_band',
         payment_method_type_id: customPaymentMethodTypeId || '',
-        stripe_payment_record_id: paymentRecordId || '',
-        stripe_payment_method_id: paymentMethodId || '',
         paid_at: new Date().toISOString(),
       },
     });
@@ -172,8 +118,6 @@ export async function POST(request: NextRequest) {
       invoiceStatus: paidInvoice.status,
       subscriptionId: paidInvoice.subscription,
       subscriptionStatus: subscription?.status || 'unknown',
-      paymentRecordId,
-      paymentMethodId,
       message: 'Invoice marked as paid successfully',
     });
   } catch (error) {
