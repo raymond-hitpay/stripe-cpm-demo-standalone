@@ -51,7 +51,7 @@ export default function CartPage() {
           Add some products to get started!
         </p>
         <Link
-          href="/"
+          href="/shop"
           className="mt-6 inline-block bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700 transition-colors"
         >
           Continue Shopping
@@ -160,13 +160,13 @@ export default function CartPage() {
               </div>
             </div>
             <Link
-              href="/checkout"
+              href="/shop/checkout"
               className="mt-6 block w-full bg-indigo-600 text-white text-center py-3 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
             >
               Proceed to Checkout
             </Link>
             <Link
-              href="/"
+              href="/shop"
               className="mt-3 block w-full text-center text-gray-600 hover:text-gray-900"
             >
               Continue Shopping

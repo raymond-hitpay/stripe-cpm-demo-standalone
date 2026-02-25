@@ -12,6 +12,11 @@ export interface Product {
   price: number;
   currency: string;
   image: string;
+  // Subscription fields
+  type?: 'one_time' | 'subscription';
+  stripePriceId?: string;       // Stripe Price ID for subscriptions
+  interval?: 'month' | 'year';  // Billing interval
+  intervalCount?: number;       // e.g., 1 for monthly
 }
 
 export interface CartItem extends Product {
@@ -95,6 +100,7 @@ export const products: Product[] = [
     price: 890, // $8.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=400&h=400&fit=crop',
+    type: 'one_time',
   },
   {
     id: 'prod_2',
@@ -103,6 +109,7 @@ export const products: Product[] = [
     price: 2990, // $29.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1587049352846-4a222e784d38?w=400&h=400&fit=crop',
+    type: 'one_time',
   },
   {
     id: 'prod_3',
@@ -111,6 +118,7 @@ export const products: Product[] = [
     price: 2490, // $24.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=400&h=400&fit=crop',
+    type: 'one_time',
   },
   {
     id: 'prod_4',
@@ -119,6 +127,7 @@ export const products: Product[] = [
     price: 1290, // $12.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1551462147-ff29053bfc14?w=400&h=400&fit=crop',
+    type: 'one_time',
   },
   {
     id: 'prod_5',
@@ -127,5 +136,9 @@ export const products: Product[] = [
     price: 1990, // $19.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=400&h=400&fit=crop',
+    type: 'one_time',
   },
 ];
+
+// Subscription products are now fetched dynamically from Stripe Dashboard
+// See /app/api/products/route.ts for the API that fetches products from Stripe

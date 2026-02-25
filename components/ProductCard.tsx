@@ -2,6 +2,7 @@
 
 import { Product, useCartStore } from '@/lib/store';
 import Image from 'next/image';
+import Link from 'next/link';
 
 interface ProductCardProps {
   product: Product;
@@ -9,12 +10,18 @@ interface ProductCardProps {
 
 export function ProductCard({ product }: ProductCardProps) {
   const addItem = useCartStore((state) => state.addItem);
+  const isSubscription = product.type === 'subscription';
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('en-SG', {
       style: 'currency',
       currency: 'SGD',
     }).format(price / 100);
+  };
+
+  const getIntervalLabel = (interval?: 'month' | 'year') => {
+    if (!interval) return '';
+    return interval === 'month' ? '/mo' : '/yr';
   };
 
   return (
@@ -27,6 +34,11 @@ export function ProductCard({ product }: ProductCardProps) {
           className="object-cover"
           sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
         />
+        {isSubscription && (
+          <span className="absolute top-2 right-2 bg-indigo-600 text-white text-xs px-2 py-1 rounded-full font-medium">
+            {product.interval === 'month' ? 'Monthly' : 'Yearly'}
+          </span>
+        )}
       </div>
       <div className="p-4">
         <h3 className="font-semibold text-lg text-gray-900">{product.name}</h3>
@@ -36,13 +48,27 @@ export function ProductCard({ product }: ProductCardProps) {
         <div className="mt-4 flex items-center justify-between">
           <span className="text-xl font-bold text-indigo-600">
             {formatPrice(product.price)}
+            {isSubscription && (
+              <span className="text-sm font-normal text-gray-500">
+                {getIntervalLabel(product.interval)}
+              </span>
+            )}
           </span>
-          <button
-            onClick={() => addItem(product)}
-            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
-          >
-            Add to Cart
-          </button>
+          {isSubscription ? (
+            <Link
+              href={`/subscribe?priceId=${product.stripePriceId}&productId=${product.id}`}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
+            >
+              Subscribe
+            </Link>
+          ) : (
+            <button
+              onClick={() => addItem(product)}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
+            >
+              Add to Cart
+            </button>
+          )}
         </div>
       </div>
     </div>

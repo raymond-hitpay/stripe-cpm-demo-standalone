@@ -33,7 +33,7 @@ import { stripePromise } from '@/lib/stripe-client';
 import { CheckoutForm } from '@/components/CheckoutForm';
 import Link from 'next/link';
 import Image from 'next/image';
-import { CUSTOM_PAYMENT_METHODS, getAllCpmTypeIds } from '@/config/payment-methods';
+import { getOneTimeCpms, getOneTimeCpmTypeIds } from '@/config/payment-methods';
 
 // =============================================================================
 // COMPONENT
@@ -130,7 +130,7 @@ export default function CheckoutPage() {
         </h2>
         <p className="mt-2 text-gray-500">Add some products before checkout.</p>
         <Link
-          href="/"
+          href="/shop"
           className="mt-6 inline-block bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700 transition-colors"
         >
           Continue Shopping
@@ -159,10 +159,10 @@ export default function CheckoutPage() {
           <h2 className="text-xl font-semibold text-red-900">Checkout Error</h2>
           <p className="mt-2 text-red-600">{error}</p>
           <Link
-            href="/"
+            href="/shop"
             className="mt-4 inline-block bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700"
           >
-            Back to Home
+            Back to Shop
           </Link>
         </div>
       </div>
@@ -183,15 +183,16 @@ export default function CheckoutPage() {
    * Note: We use 'as any' because the customPaymentMethods property is part of
    * a beta API and may not be in the official TypeScript definitions yet.
    */
-  const cpmTypeIds = getAllCpmTypeIds();
+  const oneTimeCpms = getOneTimeCpms();
+  const oneTimeCpmTypeIds = getOneTimeCpmTypeIds();
   const elementsOptions = clientSecret
     ? {
         clientSecret,
         appearance: {
           theme: 'stripe' as const,
         },
-        // Configure all Custom Payment Methods to show in Payment Element
-        customPaymentMethods: CUSTOM_PAYMENT_METHODS.map((pm) => ({
+        // Configure one-time Custom Payment Methods to show in Payment Element
+        customPaymentMethods: oneTimeCpms.map((pm) => ({
           id: pm.id,
           options: {
             // 'static' shows placeholder text; 'embedded' allows custom content
@@ -199,7 +200,7 @@ export default function CheckoutPage() {
           },
         })),
         // Show custom payment methods first, then card
-        paymentMethodOrder: [...cpmTypeIds, 'card'],
+        paymentMethodOrder: [...oneTimeCpmTypeIds, 'card'],
       }
     : null;
 
@@ -252,10 +253,10 @@ export default function CheckoutPage() {
               Standalone Integration
             </h3>
             <ul className="mt-2 text-xs text-gray-600 space-y-1">
-              <li>• PaymentIntent created on your Stripe account</li>
-              <li>• Custom Payment Method Type configured on your account</li>
-              <li>• HitPay QR embedded in Payment Element</li>
-              <li>• Payment Record created on your account</li>
+              <li>- PaymentIntent created on your Stripe account</li>
+              <li>- Custom Payment Method Type configured on your account</li>
+              <li>- HitPay QR embedded in Payment Element</li>
+              <li>- Payment Record created on your account</li>
             </ul>
           </div>
         </div>

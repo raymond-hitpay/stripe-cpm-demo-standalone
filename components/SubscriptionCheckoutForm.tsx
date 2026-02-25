@@ -1,27 +1,20 @@
 /**
- * CheckoutForm - Handles both Stripe native payments and HitPay PayNow.
+ * SubscriptionCheckoutForm - Handles subscription payments via Stripe and HitPay CPM.
  *
- * This component integrates with Stripe's Payment Element and adds custom
- * payment method support for HitPay PayNow. When PayNow is selected, it:
- * 1. Creates a HitPay payment request with QR code
- * 2. Displays the QR code for the customer to scan
- * 3. Polls for payment completion
- * 4. Redirects to success page when payment is confirmed
+ * This component supports:
+ * 1. Standard Stripe payments (card, PayNow via Stripe)
+ * 2. Custom Payment Methods (HitPay PayNow, ShopeePay) via QR code
  *
- * Payment Flow for Custom Payment Methods (PayNow):
- * 1. User selects PayNow in the Payment Element
- * 2. Component detects CPM selection via onChange event
- * 3. Calls /api/hitpay/create to generate QR code
- * 4. Displays QR code for user to scan with banking app
- * 5. Polls /api/payment/check-status every POLL_INTERVAL_MS
- * 6. On completion, redirects to success page
+ * CPM Payment Flow:
+ * 1. User selects CPM (PayNow/ShopeePay) in Payment Element
+ * 2. Component creates HitPay payment request with QR code
+ * 3. User scans QR and pays
+ * 4. Component polls for completion
+ * 5. On success, marks invoice as paid and redirects to success page
  *
- * Note: Polling provides immediate user feedback. Webhooks (configured separately)
- * serve as a backup to ensure payment recording even if the browser closes.
- *
- * @see /app/api/hitpay/create/route.ts - Creates HitPay payment request
- * @see /app/api/payment/check-status/route.ts - Polls payment status
- * @see /app/api/hitpay/webhook/route.ts - Webhook backup for reliability
+ * @see /app/api/create-subscription/route.ts - Creates subscription
+ * @see /app/api/subscription/pay-invoice/route.ts - Marks invoice as paid
+ * @see /app/subscribe/success/page.tsx - Success page
  */
 'use client';
 
@@ -31,48 +24,46 @@ import {
   useElements,
 } from '@stripe/react-stripe-js';
 import { useState, useEffect, useCallback } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import { useRouter } from 'next/navigation';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   isCustomPaymentMethod,
-  getHitpayMethod,
   getPaymentMethodConfig,
   getAllCpmTypeIds,
+  getHitpayMethod,
 } from '@/config/payment-methods';
 
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
 
-/**
- * How often to poll for payment status (in milliseconds).
- * 3 seconds provides a good balance between responsiveness and server load.
- */
 const POLL_INTERVAL_MS = 3000;
-
-/**
- * Maximum number of polling attempts before showing a timeout message.
- * With 3-second intervals, 60 attempts = ~3 minutes max wait time.
- */
 const MAX_POLL_ATTEMPTS = 60;
 
 // =============================================================================
 // TYPES
 // =============================================================================
 
-interface CheckoutFormProps {
-  /** Payment amount in cents (e.g., 1999 = $19.99) */
+type BillingType = 'out_of_band' | 'charge_automatically';
+
+interface SubscriptionCheckoutFormProps {
+  /** Subscription amount in cents (e.g., 2990 = $29.90) */
   amount: number;
-  /** Stripe PaymentIntent ID for this checkout session */
-  paymentIntentId: string;
+  /** Stripe Subscription ID */
+  subscriptionId: string;
+  /** Stripe Invoice ID for the first payment */
+  invoiceId: string;
+  /** Product name for display */
+  productName: string;
+  /** Billing interval (month/year) */
+  interval: 'month' | 'year';
+  /** Billing type - defaults to out_of_band for this component */
+  billingType?: BillingType;
 }
 
 interface QRCodeData {
-  /** QR code data (URL or PayNow string) */
   qrCode: string;
-  /** HitPay payment request ID for status checking */
   paymentRequestId: string;
-  /** HitPay checkout URL for fallback */
   checkoutUrl: string;
 }
 
@@ -80,10 +71,14 @@ interface QRCodeData {
 // COMPONENT
 // =============================================================================
 
-export function CheckoutForm({
+export function SubscriptionCheckoutForm({
   amount,
-  paymentIntentId,
-}: CheckoutFormProps) {
+  subscriptionId,
+  invoiceId,
+  productName,
+  interval,
+  billingType = 'out_of_band',
+}: SubscriptionCheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
   const router = useRouter();
@@ -92,22 +87,17 @@ export function CheckoutForm({
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Track selected payment method type for CPM detection
+  const [selectedPaymentMethodType, setSelectedPaymentMethodType] = useState<string | null>(null);
+
   // QR code state for custom payment methods
   const [qrCodeData, setQRCodeData] = useState<QRCodeData | null>(null);
   const [isLoadingQR, setIsLoadingQR] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState<
-    'idle' | 'pending' | 'completed' | 'failed'
-  >('idle');
+  const [paymentStatus, setPaymentStatus] = useState<'idle' | 'pending' | 'completed' | 'failed'>('idle');
   const [pollAttempts, setPollAttempts] = useState(0);
-  // Fallback checkout URL when QR fails
   const [fallbackCheckoutUrl, setFallbackCheckoutUrl] = useState<string | null>(null);
 
-  // Track selected payment method type
-  const [selectedPaymentMethodType, setSelectedPaymentMethodType] = useState<
-    string | null
-  >(null);
-
-  // Check if the selected payment method is a custom payment method (e.g., PayNow, ShopeePay)
+  // Check if the selected payment method is a custom payment method
   const isCustomPaymentSelected =
     selectedPaymentMethodType !== null &&
     isCustomPaymentMethod(selectedPaymentMethodType);
@@ -133,15 +123,21 @@ export function CheckoutForm({
   };
 
   /**
+   * Get interval label for display
+   */
+  const getIntervalLabel = () => {
+    return interval === 'month' ? 'month' : 'year';
+  };
+
+  /**
    * Creates a HitPay payment request and gets the QR code.
-   * Called automatically when a custom payment method is selected.
    */
   const createHitPayQR = useCallback(async () => {
     if (qrCodeData || isLoadingQR || !selectedHitpayMethod) return;
 
     setIsLoadingQR(true);
     setErrorMessage(null);
-    setPollAttempts(0); // Reset poll attempts for new QR
+    setPollAttempts(0);
 
     try {
       const response = await fetch('/api/hitpay/create', {
@@ -150,9 +146,7 @@ export function CheckoutForm({
         body: JSON.stringify({
           amount,
           currency: 'sgd',
-          // Use PaymentIntent ID as reference to link HitPay payment back to Stripe
-          referenceNumber: paymentIntentId,
-          // Pass the HitPay payment method based on selected CPM
+          referenceNumber: `sub_${subscriptionId}_inv_${invoiceId}`,
           paymentMethod: selectedHitpayMethod,
         }),
       });
@@ -164,9 +158,7 @@ export function CheckoutForm({
 
       const data = await response.json();
 
-      // Check if QR code was actually generated
       if (!data.qrCode) {
-        // Store checkout URL as fallback if available
         if (data.checkoutUrl) {
           setFallbackCheckoutUrl(data.checkoutUrl);
         }
@@ -182,7 +174,7 @@ export function CheckoutForm({
       });
       setPaymentStatus('pending');
       console.log(
-        `[HitPay] QR generated for ${selectedPaymentConfig?.displayName}:`,
+        `[Subscription HitPay] QR generated for ${selectedPaymentConfig?.displayName}:`,
         data.paymentRequestId
       );
     } catch (error) {
@@ -195,11 +187,10 @@ export function CheckoutForm({
     } finally {
       setIsLoadingQR(false);
     }
-  }, [amount, paymentIntentId, qrCodeData, isLoadingQR, selectedHitpayMethod, selectedPaymentConfig?.displayName]);
+  }, [amount, subscriptionId, invoiceId, qrCodeData, isLoadingQR, selectedHitpayMethod, selectedPaymentConfig?.displayName]);
 
   /**
    * Effect: Generate QR code when a custom payment method is selected.
-   * Does not retry if there's already an error (user must click "Try again").
    */
   useEffect(() => {
     if (isCustomPaymentSelected && selectedHitpayMethod && !qrCodeData && !isLoadingQR && !errorMessage) {
@@ -209,24 +200,18 @@ export function CheckoutForm({
 
   /**
    * Effect: Poll for payment status while QR code is displayed.
-   *
-   * Polls the check-status endpoint every POLL_INTERVAL_MS until:
-   * - Payment is completed (redirect to success)
-   * - Payment fails/expires (show error, allow retry)
-   * - Max attempts reached (show timeout message)
    */
   useEffect(() => {
     if (!qrCodeData?.paymentRequestId || paymentStatus !== 'pending') {
       return;
     }
 
-    // Check if we've exceeded max attempts
     if (pollAttempts >= MAX_POLL_ATTEMPTS) {
       setPaymentStatus('failed');
       setErrorMessage(
         'Payment verification timed out. If you completed the payment, ' +
-          'please contact support with your reference number: ' +
-          paymentIntentId
+          'please contact support with your reference: ' +
+          `sub_${subscriptionId}_inv_${invoiceId}`
       );
       return;
     }
@@ -235,46 +220,63 @@ export function CheckoutForm({
       setPollAttempts((prev) => prev + 1);
 
       try {
-        const response = await fetch('/api/payment/check-status', {
+        // Check HitPay payment status
+        const statusResponse = await fetch('/api/hitpay/status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            paymentIntentId,
-            hitpayPaymentRequestId: qrCodeData.paymentRequestId,
-            customPaymentMethodTypeId: selectedPaymentMethodType,
+            paymentRequestId: qrCodeData.paymentRequestId,
           }),
         });
 
-        // Don't fail on HTTP errors - keep polling
-        // Network issues are transient, webhook will catch it if polling fails
-        if (!response.ok) {
-          console.warn('[Payment Status] API error:', response.status);
+        if (!statusResponse.ok) {
+          console.warn('[Subscription HitPay] Status check error:', statusResponse.status);
           return;
         }
 
-        const data = await response.json();
-        console.log('[Payment Status]', data);
+        const statusData = await statusResponse.json();
+        console.log('[Subscription HitPay] Status:', statusData);
 
-        if (data.status === 'completed') {
+        if (statusData.status === 'completed') {
           setPaymentStatus('completed');
           clearInterval(pollInterval);
 
-          // Redirect to success page with payment details
+          // Mark the invoice as paid
+          try {
+            const payInvoiceResponse = await fetch('/api/subscription/pay-invoice', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                invoiceId,
+                hitpayPaymentId: qrCodeData.paymentRequestId,
+                customPaymentMethodTypeId: selectedPaymentMethodType,
+              }),
+            });
+
+            if (!payInvoiceResponse.ok) {
+              const payError = await payInvoiceResponse.json();
+              console.error('[Subscription HitPay] Pay invoice error:', payError);
+            } else {
+              console.log('[Subscription HitPay] Invoice marked as paid');
+            }
+          } catch (payError) {
+            console.error('[Subscription HitPay] Pay invoice error:', payError);
+          }
+
+          // Redirect to success page
           const params = new URLSearchParams({
+            subscription_id: subscriptionId,
             method: selectedPaymentConfig?.displayName.toLowerCase() || 'custom',
-            payment_id: paymentIntentId,
             hitpay_id: qrCodeData.paymentRequestId,
-            payment_record_id: data.stripe?.paymentRecordId || '',
           });
-          router.push(`/shop/success?${params.toString()}`);
-        } else if (data.status === 'failed' || data.status === 'expired') {
+          router.push(`/subscribe/success?${params.toString()}`);
+        } else if (statusData.status === 'failed' || statusData.status === 'expired') {
           setPaymentStatus('failed');
           clearInterval(pollInterval);
           setErrorMessage('Payment failed or expired. Please try again.');
           setQRCodeData(null);
         }
       } catch (error) {
-        // Log but don't fail - keep polling on network errors
         console.error('Error polling payment status:', error);
       }
     }, POLL_INTERVAL_MS);
@@ -283,21 +285,20 @@ export function CheckoutForm({
   }, [
     qrCodeData,
     paymentStatus,
-    paymentIntentId,
+    subscriptionId,
+    invoiceId,
     router,
-    selectedPaymentMethodType,
     selectedPaymentConfig,
     pollAttempts,
   ]);
 
   /**
    * Handles payment method changes in the Payment Element.
-   * Resets QR state when switching between payment methods.
    */
   const handlePaymentElementChange = (event: { value: { type: string } }) => {
     setErrorMessage(null);
 
-    // Reset QR state when switching to a different payment method
+    // Reset QR state when switching payment methods
     if (event.value.type !== selectedPaymentMethodType) {
       setQRCodeData(null);
       setPaymentStatus('idle');
@@ -309,8 +310,7 @@ export function CheckoutForm({
   };
 
   /**
-   * Handles form submission for card payments.
-   * For PayNow, the QR code flow handles payment - no submit needed.
+   * Handles form submission for card/native payments.
    */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -319,7 +319,7 @@ export function CheckoutForm({
       return;
     }
 
-    // If PayNow is selected, QR code handles the payment - no submit needed
+    // For CPM, QR code handles the payment
     if (isCustomPaymentSelected) {
       return;
     }
@@ -327,29 +327,25 @@ export function CheckoutForm({
     setIsProcessing(true);
     setErrorMessage(null);
 
-    // For Stripe native payment methods (card), use confirmPayment
-    const { error, paymentIntent } = await stripe.confirmPayment({
+    const { error } = await stripe.confirmPayment({
       elements,
       confirmParams: {
-        return_url: `${window.location.origin}/shop/success?method=card`,
+        return_url: `${window.location.origin}/subscribe/success?subscription_id=${subscriptionId}`,
       },
-      redirect: 'if_required',
     });
 
     if (error) {
-      setErrorMessage(error.message || 'An error occurred');
+      if (error.type === 'card_error' || error.type === 'validation_error') {
+        setErrorMessage(error.message || 'Payment failed. Please try again.');
+      } else {
+        setErrorMessage('An unexpected error occurred. Please try again.');
+      }
       setIsProcessing(false);
-      return;
-    }
-
-    // Payment succeeded with card
-    if (paymentIntent?.status === 'succeeded') {
-      router.push('/shop/success?method=card');
     }
   };
 
   /**
-   * Regenerates the QR code (e.g., after expiry or user request).
+   * Regenerates the QR code.
    */
   const regenerateQR = () => {
     setQRCodeData(null);
@@ -357,32 +353,48 @@ export function CheckoutForm({
     setErrorMessage(null);
     setPollAttempts(0);
     setFallbackCheckoutUrl(null);
-    // Will trigger useEffect to create new QR
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Stripe Payment Element - shows available payment methods */}
+      {/* Subscription Summary */}
+      <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4">
+        <div className="flex justify-between items-center">
+          <div>
+            <p className="font-medium text-gray-900">{productName}</p>
+            <p className="text-sm text-gray-600">
+              Billed {interval === 'month' ? 'monthly' : 'yearly'}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-lg font-bold text-indigo-600">
+              {formatPrice(amount)}
+              <span className="text-sm font-normal text-gray-500">
+                /{getIntervalLabel()}
+              </span>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Stripe Payment Element */}
       <PaymentElement
         options={
           {
             layout: 'tabs',
-            // Show custom payment methods first, then card
             paymentMethodOrder: [...getAllCpmTypeIds(), 'card'],
-          } as any // Type assertion needed for beta API
+          } as any
         }
         onChange={handlePaymentElementChange}
       />
 
-      {/* QR Code displayed below Payment Element when PayNow is selected */}
+      {/* QR Code section for CPM */}
       {isCustomPaymentSelected && (
         <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
           {isLoadingQR ? (
             <div className="flex flex-col items-center justify-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-              <p className="mt-3 text-sm text-gray-600">
-                Generating QR code...
-              </p>
+              <p className="mt-3 text-sm text-gray-600">Generating QR code...</p>
             </div>
           ) : qrCodeData ? (
             <div className="flex flex-col items-center">
@@ -402,12 +414,9 @@ export function CheckoutForm({
 
               <div className="flex items-center gap-2 text-xs text-gray-500 mb-3">
                 <div className="animate-pulse w-2 h-2 bg-green-500 rounded-full"></div>
-                <span>
-                  Waiting for payment... ({pollAttempts}/{MAX_POLL_ATTEMPTS})
-                </span>
+                <span>Waiting for payment... ({pollAttempts}/{MAX_POLL_ATTEMPTS})</span>
               </div>
 
-              {/* Link to HitPay checkout for testing */}
               {qrCodeData.qrCode && (
                 <a
                   href={qrCodeData.qrCode}
@@ -433,7 +442,6 @@ export function CheckoutForm({
                 <p className="text-red-600 text-sm">{errorMessage}</p>
               </div>
 
-              {/* Show checkout link as fallback if available */}
               {fallbackCheckoutUrl && (
                 <a
                   href={fallbackCheckoutUrl}
@@ -459,14 +467,14 @@ export function CheckoutForm({
         </div>
       )}
 
-      {/* Error message for card payments */}
+      {/* Error message for non-CPM payments */}
       {errorMessage && !isCustomPaymentSelected && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <p className="text-red-600 text-sm">{errorMessage}</p>
         </div>
       )}
 
-      {/* Pay button - only shown for card payments */}
+      {/* Subscribe button - only shown for card/native payments */}
       {!isCustomPaymentSelected && (
         <button
           type="submit"
@@ -497,9 +505,17 @@ export function CheckoutForm({
               Processing...
             </span>
           ) : (
-            `Pay ${formatPrice(amount)}`
+            `Subscribe - ${formatPrice(amount)}/${getIntervalLabel()}`
           )}
         </button>
+      )}
+
+      {/* Terms note - only shown for card/native payments */}
+      {!isCustomPaymentSelected && (
+        <p className="text-xs text-gray-500 text-center">
+          By subscribing, you agree to be charged {formatPrice(amount)} per {getIntervalLabel()}.
+          You can cancel anytime.
+        </p>
       )}
     </form>
   );

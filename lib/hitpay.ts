@@ -1,8 +1,10 @@
 /**
- * HitPay API client for PayNow QR code payment integration.
+ * HitPay API client for payment integration.
  *
  * This module handles:
- * - Creating payment requests with QR codes
+ * - Creating payment requests with QR codes (one-time payments)
+ * - Creating recurring billing sessions (save payment method)
+ * - Charging saved payment methods (auto-charge subscriptions)
  * - Checking payment status
  * - Verifying webhook signatures
  *
@@ -248,4 +250,279 @@ export function verifyHitPayWebhook(
     .digest('hex');
 
   return computedHmac === signature;
+}
+
+// ============================================================================
+// RECURRING BILLING APIs (for auto-charge subscriptions)
+// ============================================================================
+
+/**
+ * Request payload for creating a HitPay recurring billing session.
+ * Used to save a payment method for future automatic charges.
+ */
+export interface HitPayRecurringBillingRequest {
+  /** Session name/identifier (e.g., "Subscription for user@example.com") */
+  name: string;
+  /** Customer email address */
+  customer_email: string;
+  /** Customer name */
+  customer_name?: string;
+  /** Display amount (minimum 1.00, just for display during authorization) */
+  amount: number;
+  /** ISO 4217 currency code (e.g., "SGD") */
+  currency: string;
+  /** Enable saving the payment method for future charges */
+  save_payment_method: boolean;
+  /** Payment methods to offer (e.g., ["card", "shopee_recurring", "grabpay_direct"]) */
+  payment_methods: string[];
+  /** Webhook URL for charge notifications */
+  webhook?: string;
+  /** URL to redirect after authorization */
+  redirect_url?: string;
+  /** Your reference for this recurring billing (e.g., Stripe subscription ID) */
+  reference?: string;
+}
+
+/**
+ * Response from HitPay recurring billing API.
+ */
+export interface HitPayRecurringBillingResponse {
+  /** Unique recurring billing ID (use this to charge later) */
+  id: string;
+  /** Business ID */
+  business_id: string;
+  /** Session name */
+  name: string;
+  /** Customer email */
+  customer_email: string;
+  /** Customer name */
+  customer_name: string | null;
+  /** Amount for display */
+  amount: string;
+  /** Currency code */
+  currency: string;
+  /** Current status */
+  status: 'pending' | 'active' | 'canceled';
+  /** Checkout URL for customer authorization */
+  url: string;
+  /** Redirect URL after authorization */
+  redirect_url: string | null;
+  /** Webhook URL */
+  webhook: string | null;
+  /** Payment methods enabled */
+  payment_methods: string[];
+  /** Saved card details (only present after customer authorizes) */
+  card?: {
+    brand: string;
+    last4: string;
+    country: string;
+  };
+  /** Saved payment method type */
+  payment_method_type?: string;
+  /** Reference */
+  reference: string | null;
+  /** Creation timestamp */
+  created_at: string;
+  /** Last update timestamp */
+  updated_at: string;
+}
+
+/**
+ * Response from charging a recurring billing session.
+ */
+export interface HitPayChargeResponse {
+  /** Payment ID for this charge */
+  payment_id: string;
+  /** Recurring billing ID that was charged */
+  recurring_billing_id: string;
+  /** Amount charged */
+  amount: number;
+  /** Currency */
+  currency: string;
+  /** Charge status */
+  status: 'succeeded' | 'pending' | 'failed';
+  /** Error message if failed */
+  error?: string;
+}
+
+/**
+ * Creates a HitPay recurring billing session to save a payment method.
+ *
+ * After creating the session, redirect the customer to the returned URL
+ * to authorize their payment method. Once authorized, you can charge
+ * the saved payment method using chargeRecurringBilling().
+ *
+ * @param data - Recurring billing session parameters
+ * @returns The created recurring billing session
+ * @throws Error if the API request fails
+ *
+ * @example
+ * ```ts
+ * const session = await createRecurringBilling({
+ *   name: "Subscription for john@example.com",
+ *   customer_email: "john@example.com",
+ *   customer_name: "John Doe",
+ *   amount: 1.00, // Display amount
+ *   currency: "SGD",
+ *   save_payment_method: true,
+ *   payment_methods: ["shopee_recurring"],
+ *   redirect_url: "https://example.com/subscribe/setup",
+ *   reference: "sub_xxx",
+ * });
+ *
+ * // Redirect customer to session.url
+ * ```
+ */
+export async function createRecurringBilling(
+  data: HitPayRecurringBillingRequest
+): Promise<HitPayRecurringBillingResponse> {
+  const apiKey = process.env.HITPAY_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      'HITPAY_API_KEY is not set. Please configure it in your .env.local file.'
+    );
+  }
+
+  // Build form data (HitPay recurring billing API uses form encoding)
+  const formData = new URLSearchParams();
+  formData.append('name', data.name);
+  formData.append('customer_email', data.customer_email);
+  if (data.customer_name) formData.append('customer_name', data.customer_name);
+  formData.append('amount', data.amount.toFixed(2));
+  formData.append('currency', data.currency.toUpperCase());
+  formData.append('save_payment_method', data.save_payment_method ? 'true' : 'false');
+  data.payment_methods.forEach((method) => {
+    formData.append('payment_methods[]', method);
+  });
+  if (data.webhook) formData.append('webhook', data.webhook);
+  if (data.redirect_url) formData.append('redirect_url', data.redirect_url);
+  if (data.reference) formData.append('reference', data.reference);
+
+  const response = await fetch(`${HITPAY_API_BASE}/recurring-billing`, {
+    method: 'POST',
+    headers: {
+      'X-BUSINESS-API-KEY': apiKey,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: formData.toString(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`HitPay API error (${response.status}): ${error}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Charges a saved payment method from a recurring billing session.
+ *
+ * Use this after the customer has authorized their payment method
+ * via the recurring billing checkout URL.
+ *
+ * @param recurringBillingId - The HitPay recurring billing session ID
+ * @param amount - Amount to charge
+ * @param currency - Currency code (e.g., "SGD")
+ * @returns The charge result
+ * @throws Error if the API request fails or charge fails
+ *
+ * @example
+ * ```ts
+ * const charge = await chargeRecurringBilling(
+ *   "9741164c-06a1-4dd7-a649-72cca8f9603a",
+ *   29.90,
+ *   "SGD"
+ * );
+ *
+ * if (charge.status === "succeeded") {
+ *   // Record payment in Stripe
+ * }
+ * ```
+ */
+export async function chargeRecurringBilling(
+  recurringBillingId: string,
+  amount: number,
+  currency: string
+): Promise<HitPayChargeResponse> {
+  const apiKey = process.env.HITPAY_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      'HITPAY_API_KEY is not set. Please configure it in your .env.local file.'
+    );
+  }
+
+  const formData = new URLSearchParams();
+  formData.append('amount', amount.toFixed(2));
+  formData.append('currency', currency.toUpperCase());
+
+  const response = await fetch(
+    `${HITPAY_API_BASE}/charge/recurring-billing/${recurringBillingId}`,
+    {
+      method: 'POST',
+      headers: {
+        'X-BUSINESS-API-KEY': apiKey,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData.toString(),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`HitPay charge error (${response.status}): ${error}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieves the status of a HitPay recurring billing session.
+ *
+ * Use this to check if a customer has authorized their payment method
+ * and to retrieve saved card details.
+ *
+ * @param recurringBillingId - The HitPay recurring billing session ID
+ * @returns The recurring billing session details
+ * @throws Error if the API request fails
+ *
+ * @example
+ * ```ts
+ * const session = await getRecurringBilling("9741164c-...");
+ * if (session.status === "active" && session.card) {
+ *   console.log(`Card saved: ${session.card.brand} ending in ${session.card.last4}`);
+ * }
+ * ```
+ */
+export async function getRecurringBilling(
+  recurringBillingId: string
+): Promise<HitPayRecurringBillingResponse> {
+  const apiKey = process.env.HITPAY_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      'HITPAY_API_KEY is not set. Please configure it in your .env.local file.'
+    );
+  }
+
+  const response = await fetch(
+    `${HITPAY_API_BASE}/recurring-billing/${recurringBillingId}`,
+    {
+      method: 'GET',
+      headers: {
+        'X-BUSINESS-API-KEY': apiKey,
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`HitPay API error (${response.status}): ${error}`);
+  }
+
+  return response.json();
 }

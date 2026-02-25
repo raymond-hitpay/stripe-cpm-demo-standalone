@@ -14,7 +14,7 @@ export function CartIcon() {
 
   return (
     <Link
-      href="/cart"
+      href="/shop/cart"
       className="relative p-2 text-gray-600 hover:text-gray-900 transition-colors"
     >
       <svg
