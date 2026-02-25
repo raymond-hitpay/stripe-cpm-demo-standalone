@@ -14,7 +14,7 @@
  */
 'use client';
 
-import { useEffect, useState, useRef, Suspense, useCallback } from 'react';
+import { useEffect, useState, useRef, Suspense } from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import { useSearchParams } from 'next/navigation';
 import { stripePromise } from '@/lib/stripe-client';
@@ -29,11 +29,7 @@ import {
   getAutoChargeCpms,
   getAutoChargeCpmTypeIds,
 } from '@/config/payment-methods';
-import {
-  CpmDisplayToggle,
-  CpmDisplayType,
-  getSavedDisplayType,
-} from '@/components/CpmDisplayToggle';
+import { CpmDisplayType } from '@/components/CpmDisplayToggle';
 
 export type BillingType = 'out_of_band' | 'charge_automatically';
 
@@ -54,10 +50,8 @@ function SubscribeContent() {
   // Billing type state
   const [billingType, setBillingType] = useState<BillingType>('charge_automatically');
 
-  // CPM display type state
-  const [displayType, setDisplayType] = useState<CpmDisplayType>(() =>
-    typeof window !== 'undefined' ? getSavedDisplayType() : 'static'
-  );
+  // CPM display type: always use 'embedded' for demo
+  const [displayType] = useState<CpmDisplayType>('embedded');
 
   // Container ref for embedded mode
   const embeddedContainerRef = useRef<HTMLElement | null>(null);
@@ -81,13 +75,6 @@ function SubscribeContent() {
   // Get available CPMs based on billing type
   const autoChargeCpms = getAutoChargeCpms();
   const hasAutoChargeCpms = autoChargeCpms.length > 0;
-
-  // Callback for when display type changes
-  const handleDisplayTypeChange = useCallback((type: CpmDisplayType) => {
-    setDisplayType(type);
-    embeddedContainerRef.current = null;
-    setEmbeddedContainerKey((k) => k + 1);
-  }, []);
 
   // Check if form is valid for submission
   const isFormValid = customerEmail.trim() !== '' && customerName.trim() !== '';
@@ -314,8 +301,8 @@ function SubscribeContent() {
               },
               handleDestroy: () => {
                 console.log('[Embedded] handleDestroy called for', pm.displayName);
-                embeddedContainerRef.current = null;
-                setEmbeddedContainerKey((k) => k + 1);
+                // Don't null the container here - rapid clicks cause destroy/render cycles
+                // The portal visibility is controlled by isCustomPaymentSelected in CheckoutForm
               },
             },
           },
@@ -597,14 +584,6 @@ function SubscribeContent() {
                     </span>
                   </p>
                 </div>
-
-                {/* CPM Display Type Toggle - only for out-of-band billing */}
-                {billingType === 'out_of_band' && (
-                  <CpmDisplayToggle
-                    onChange={handleDisplayTypeChange}
-                    defaultValue={displayType}
-                  />
-                )}
 
                 {/* Out-of-Band: Stripe Elements */}
                 {billingType === 'out_of_band' && clientSecret && subscriptionId && invoiceId && stripePromise && elementsOptions && (

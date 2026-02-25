@@ -26,7 +26,7 @@
  */
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import { useCartStore } from '@/lib/store';
 import { stripePromise } from '@/lib/stripe-client';
@@ -34,11 +34,7 @@ import { CheckoutForm } from '@/components/CheckoutForm';
 import Link from 'next/link';
 import Image from 'next/image';
 import { getOneTimeCpms, getOneTimeCpmTypeIds } from '@/config/payment-methods';
-import {
-  CpmDisplayToggle,
-  CpmDisplayType,
-  getSavedDisplayType,
-} from '@/components/CpmDisplayToggle';
+import { CpmDisplayType } from '@/components/CpmDisplayToggle';
 
 // =============================================================================
 // COMPONENT
@@ -51,10 +47,8 @@ export default function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // CPM display type: 'static' or 'embedded'
-  const [displayType, setDisplayType] = useState<CpmDisplayType>(() =>
-    typeof window !== 'undefined' ? getSavedDisplayType() : 'static'
-  );
+  // CPM display type: always use 'embedded' for demo
+  const [displayType] = useState<CpmDisplayType>('embedded');
 
   // Container ref for embedded mode - stores the DOM element from handleRender
   const embeddedContainerRef = useRef<HTMLElement | null>(null);
@@ -65,14 +59,6 @@ export default function CheckoutPage() {
 
   // Ref to prevent duplicate payment creation (React StrictMode runs effects twice)
   const hasCreatedPayment = useRef(false);
-
-  // Callback for when display type changes
-  const handleDisplayTypeChange = useCallback((type: CpmDisplayType) => {
-    setDisplayType(type);
-    // Reset embedded container when switching types
-    embeddedContainerRef.current = null;
-    setEmbeddedContainerKey((k) => k + 1);
-  }, []);
 
   useEffect(() => {
     setMounted(true);
@@ -231,8 +217,8 @@ export default function CheckoutPage() {
               },
               handleDestroy: () => {
                 console.log('[Embedded] handleDestroy called for', pm.displayName);
-                embeddedContainerRef.current = null;
-                setEmbeddedContainerKey((k) => k + 1);
+                // Don't null the container here - rapid clicks cause destroy/render cycles
+                // The portal visibility is controlled by isCustomPaymentSelected in CheckoutForm
               },
             },
           },
@@ -323,12 +309,6 @@ export default function CheckoutPage() {
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
               Payment Method
             </h2>
-
-            {/* CPM Display Type Toggle */}
-            <CpmDisplayToggle
-              onChange={handleDisplayTypeChange}
-              defaultValue={displayType}
-            />
 
             {/* Stripe Elements with Custom Payment Methods */}
             {clientSecret && paymentIntentId && stripePromise && elementsOptions && (
