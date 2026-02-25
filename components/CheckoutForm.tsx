@@ -31,7 +31,7 @@ import {
   useElements,
 } from '@stripe/react-stripe-js';
 import { useState, useEffect, useCallback } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
   isCustomPaymentMethod,
@@ -39,6 +39,9 @@ import {
   getPaymentMethodConfig,
   getAllCpmTypeIds,
 } from '@/config/payment-methods';
+import type { CpmDisplayType } from '@/components/CpmDisplayToggle';
+import { EmbeddedQRContent } from '@/components/EmbeddedQRContent';
+import { QRPaymentModal } from '@/components/QRPaymentModal';
 
 // =============================================================================
 // CONFIGURATION
@@ -65,6 +68,12 @@ interface CheckoutFormProps {
   amount: number;
   /** Stripe PaymentIntent ID for this checkout session */
   paymentIntentId: string;
+  /** CPM display type: 'static' (QR below) or 'embedded' (QR inside element) */
+  displayType?: CpmDisplayType;
+  /** DOM container for embedded mode (from handleRender callback) */
+  embeddedContainer?: HTMLElement | null;
+  /** Key to force re-render when embedded container changes */
+  embeddedContainerKey?: number;
 }
 
 interface QRCodeData {
@@ -83,14 +92,23 @@ interface QRCodeData {
 export function CheckoutForm({
   amount,
   paymentIntentId,
+  displayType = 'static',
+  embeddedContainer,
+  embeddedContainerKey,
 }: CheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
   const router = useRouter();
 
+  // Track if we're in embedded mode with an active container
+  const isEmbeddedMode = displayType === 'embedded' && embeddedContainer !== null;
+
   // Form state
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Modal state for static mode
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   // QR code state for custom payment methods
   const [qrCodeData, setQRCodeData] = useState<QRCodeData | null>(null);
@@ -198,14 +216,27 @@ export function CheckoutForm({
   }, [amount, paymentIntentId, qrCodeData, isLoadingQR, selectedHitpayMethod, selectedPaymentConfig?.displayName]);
 
   /**
-   * Effect: Generate QR code when a custom payment method is selected.
+   * Effect: Generate QR code when appropriate.
+   * - For embedded mode: Auto-generate when CPM is selected
+   * - For static mode: Generate when modal opens
    * Does not retry if there's already an error (user must click "Try again").
    */
   useEffect(() => {
-    if (isCustomPaymentSelected && selectedHitpayMethod && !qrCodeData && !isLoadingQR && !errorMessage) {
-      createHitPayQR();
+    const shouldGenerateQR =
+      isCustomPaymentSelected &&
+      selectedHitpayMethod &&
+      !qrCodeData &&
+      !isLoadingQR &&
+      !errorMessage;
+
+    // For static mode, only generate when modal is open
+    // For embedded mode, auto-generate when CPM is selected
+    if (shouldGenerateQR) {
+      if (displayType === 'embedded' || (displayType === 'static' && isModalOpen)) {
+        createHitPayQR();
+      }
     }
-  }, [isCustomPaymentSelected, selectedHitpayMethod, qrCodeData, isLoadingQR, errorMessage, createHitPayQR]);
+  }, [isCustomPaymentSelected, selectedHitpayMethod, qrCodeData, isLoadingQR, errorMessage, createHitPayQR, displayType, isModalOpen]);
 
   /**
    * Effect: Poll for payment status while QR code is displayed.
@@ -303,9 +334,28 @@ export function CheckoutForm({
       setPaymentStatus('idle');
       setPollAttempts(0);
       setFallbackCheckoutUrl(null);
+      setIsModalOpen(false); // Close modal when switching payment methods
     }
 
     setSelectedPaymentMethodType(event.value.type);
+  };
+
+  /**
+   * Opens the payment modal and triggers QR generation.
+   */
+  const handleProceedToPayment = () => {
+    setIsModalOpen(true);
+    // QR generation will be triggered by the useEffect
+  };
+
+  /**
+   * Closes the payment modal.
+   */
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    // Optionally reset QR state when closing modal
+    // setQRCodeData(null);
+    // setPaymentStatus('idle');
   };
 
   /**
@@ -374,90 +424,54 @@ export function CheckoutForm({
         onChange={handlePaymentElementChange}
       />
 
-      {/* QR Code displayed below Payment Element when PayNow is selected */}
-      {isCustomPaymentSelected && (
-        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-          {isLoadingQR ? (
-            <div className="flex flex-col items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-              <p className="mt-3 text-sm text-gray-600">
-                Generating QR code...
-              </p>
-            </div>
-          ) : qrCodeData ? (
-            <div className="flex flex-col items-center">
-              <p className="text-lg font-bold text-indigo-600 mb-3">
-                {formatPrice(amount)}
-              </p>
-
-              <div className="bg-white p-3 rounded-lg border border-gray-200 mb-3">
-                <QRCodeSVG value={qrCodeData.qrCode} size={180} level="M" />
-              </div>
-
-              <p className="text-sm text-gray-600 text-center mb-2">
-                {selectedPaymentConfig?.displayName === 'PayNow'
-                  ? 'Scan with your banking app to pay'
-                  : `Complete payment via ${selectedPaymentConfig?.displayName || 'the app'}`}
-              </p>
-
-              <div className="flex items-center gap-2 text-xs text-gray-500 mb-3">
-                <div className="animate-pulse w-2 h-2 bg-green-500 rounded-full"></div>
-                <span>
-                  Waiting for payment... ({pollAttempts}/{MAX_POLL_ATTEMPTS})
-                </span>
-              </div>
-
-              {/* Link to HitPay checkout for testing */}
-              {qrCodeData.qrCode && (
-                <a
-                  href={qrCodeData.qrCode}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-indigo-600 hover:text-indigo-700 underline mb-2"
-                >
-                  Complete Mock Payment (for testing)
-                </a>
-              )}
-
-              <button
-                type="button"
-                onClick={regenerateQR}
-                className="text-xs text-gray-500 hover:text-gray-700 underline"
-              >
-                Generate new QR code
-              </button>
-            </div>
-          ) : errorMessage ? (
-            <div className="text-center py-4">
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-3">
-                <p className="text-red-600 text-sm">{errorMessage}</p>
-              </div>
-
-              {/* Show checkout link as fallback if available */}
-              {fallbackCheckoutUrl && (
-                <a
-                  href={fallbackCheckoutUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors text-sm mb-3"
-                >
-                  Complete Payment via {selectedPaymentConfig?.displayName || 'Checkout'}
-                </a>
-              )}
-
-              <div>
-                <button
-                  type="button"
-                  onClick={regenerateQR}
-                  className="text-sm text-gray-500 hover:text-gray-700 underline"
-                >
-                  Try again
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
+      {/* Proceed to Payment button for STATIC mode */}
+      {isCustomPaymentSelected && displayType === 'static' && (
+        <button
+          type="button"
+          onClick={handleProceedToPayment}
+          className="w-full bg-indigo-600 text-white py-3 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+        >
+          Proceed to Payment
+        </button>
       )}
+
+      {/* QR Payment Modal for STATIC mode */}
+      {displayType === 'static' && (
+        <QRPaymentModal
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          amount={amount}
+          paymentMethodName={selectedPaymentConfig?.displayName || 'Payment'}
+          qrCodeData={qrCodeData}
+          isLoadingQR={isLoadingQR}
+          paymentStatus={paymentStatus}
+          pollAttempts={pollAttempts}
+          maxPollAttempts={MAX_POLL_ATTEMPTS}
+          errorMessage={errorMessage}
+          fallbackCheckoutUrl={fallbackCheckoutUrl}
+          onRegenerateQR={regenerateQR}
+        />
+      )}
+
+      {/* QR Code for EMBEDDED mode - rendered via portal into Payment Element */}
+      {isCustomPaymentSelected && displayType === 'embedded' && embeddedContainer &&
+        createPortal(
+          <EmbeddedQRContent
+            key={embeddedContainerKey}
+            amount={amount}
+            qrCodeData={qrCodeData}
+            isLoadingQR={isLoadingQR}
+            paymentStatus={paymentStatus}
+            pollAttempts={pollAttempts}
+            maxPollAttempts={MAX_POLL_ATTEMPTS}
+            errorMessage={errorMessage}
+            fallbackCheckoutUrl={fallbackCheckoutUrl}
+            paymentMethodConfig={selectedPaymentConfig}
+            onRegenerateQR={regenerateQR}
+          />,
+          embeddedContainer
+        )
+      }
 
       {/* Error message for card payments */}
       {errorMessage && !isCustomPaymentSelected && (

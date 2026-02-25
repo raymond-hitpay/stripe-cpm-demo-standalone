@@ -26,7 +26,7 @@
  */
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import { useCartStore } from '@/lib/store';
 import { stripePromise } from '@/lib/stripe-client';
@@ -34,6 +34,11 @@ import { CheckoutForm } from '@/components/CheckoutForm';
 import Link from 'next/link';
 import Image from 'next/image';
 import { getOneTimeCpms, getOneTimeCpmTypeIds } from '@/config/payment-methods';
+import {
+  CpmDisplayToggle,
+  CpmDisplayType,
+  getSavedDisplayType,
+} from '@/components/CpmDisplayToggle';
 
 // =============================================================================
 // COMPONENT
@@ -46,10 +51,28 @@ export default function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // CPM display type: 'static' or 'embedded'
+  const [displayType, setDisplayType] = useState<CpmDisplayType>(() =>
+    typeof window !== 'undefined' ? getSavedDisplayType() : 'static'
+  );
+
+  // Container ref for embedded mode - stores the DOM element from handleRender
+  const embeddedContainerRef = useRef<HTMLElement | null>(null);
+  // Force re-render when embedded container changes
+  const [embeddedContainerKey, setEmbeddedContainerKey] = useState(0);
+
   const { items, getTotal } = useCartStore();
 
   // Ref to prevent duplicate payment creation (React StrictMode runs effects twice)
   const hasCreatedPayment = useRef(false);
+
+  // Callback for when display type changes
+  const handleDisplayTypeChange = useCallback((type: CpmDisplayType) => {
+    setDisplayType(type);
+    // Reset embedded container when switching types
+    embeddedContainerRef.current = null;
+    setEmbeddedContainerKey((k) => k + 1);
+  }, []);
 
   useEffect(() => {
     setMounted(true);
@@ -185,6 +208,45 @@ export default function CheckoutPage() {
    */
   const oneTimeCpms = getOneTimeCpms();
   const oneTimeCpmTypeIds = getOneTimeCpmTypeIds();
+
+  /**
+   * Build customPaymentMethods config based on display type.
+   *
+   * For 'static': Shows placeholder, QR displayed separately below element
+   * For 'embedded': Uses handleRender callback to render custom content inside element
+   */
+  const buildCustomPaymentMethodsConfig = () => {
+    return oneTimeCpms.map((pm) => {
+      if (displayType === 'embedded') {
+        return {
+          id: pm.id,
+          options: {
+            type: 'embedded' as const,
+            subtitle: 'Scan to pay',
+            embedded: {
+              handleRender: (container: HTMLElement) => {
+                console.log('[Embedded] handleRender called for', pm.displayName);
+                embeddedContainerRef.current = container;
+                setEmbeddedContainerKey((k) => k + 1);
+              },
+              handleDestroy: () => {
+                console.log('[Embedded] handleDestroy called for', pm.displayName);
+                embeddedContainerRef.current = null;
+                setEmbeddedContainerKey((k) => k + 1);
+              },
+            },
+          },
+        };
+      }
+      return {
+        id: pm.id,
+        options: {
+          type: 'static' as const,
+        },
+      };
+    });
+  };
+
   const elementsOptions = clientSecret
     ? {
         clientSecret,
@@ -192,13 +254,7 @@ export default function CheckoutPage() {
           theme: 'stripe' as const,
         },
         // Configure one-time Custom Payment Methods to show in Payment Element
-        customPaymentMethods: oneTimeCpms.map((pm) => ({
-          id: pm.id,
-          options: {
-            // 'static' shows placeholder text; 'embedded' allows custom content
-            type: 'static' as const,
-          },
-        })),
+        customPaymentMethods: buildCustomPaymentMethodsConfig(),
         // Show custom payment methods first, then card
         paymentMethodOrder: [...oneTimeCpmTypeIds, 'card'],
       }
@@ -268,38 +324,30 @@ export default function CheckoutPage() {
               Payment Method
             </h2>
 
+            {/* CPM Display Type Toggle */}
+            <CpmDisplayToggle
+              onChange={handleDisplayTypeChange}
+              defaultValue={displayType}
+            />
+
             {/* Stripe Elements with Custom Payment Methods */}
             {clientSecret && paymentIntentId && stripePromise && elementsOptions && (
               <Elements
                 stripe={stripePromise}
                 options={elementsOptions as any} // Type assertion for beta API
-                key={paymentIntentId} // Re-mount on new PaymentIntent
+                key={`${paymentIntentId}-${displayType}`} // Re-mount on new PaymentIntent or display type change
               >
                 <CheckoutForm
                   amount={getTotal()}
                   paymentIntentId={paymentIntentId}
+                  displayType={displayType}
+                  embeddedContainer={embeddedContainerRef.current}
+                  embeddedContainerKey={embeddedContainerKey}
                 />
               </Elements>
             )}
           </div>
 
-          {/* Security Badge */}
-          <div className="mt-4 flex items-center justify-center gap-2 text-sm text-gray-500">
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-              />
-            </svg>
-            <span>Secure payment via Stripe</span>
-          </div>
         </div>
       </div>
     </div>
