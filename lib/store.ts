@@ -91,7 +91,7 @@ export const useCartStore = create<CartStore>()(
   )
 );
 
-// Dummy product data
+// Dummy product data (all prices below $10)
 export const products: Product[] = [
   {
     id: 'prod_1',
@@ -106,7 +106,7 @@ export const products: Product[] = [
     id: 'prod_2',
     name: 'Raw Manuka Honey',
     description: 'Premium New Zealand Manuka honey with rich, earthy flavour and natural benefits.',
-    price: 2990, // $29.90 in cents
+    price: 490, // $4.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1587049352846-4a222e784d38?w=400&h=400&fit=crop',
     type: 'one_time',
@@ -115,7 +115,7 @@ export const products: Product[] = [
     id: 'prod_3',
     name: 'Single Origin Coffee Beans',
     description: 'Ethiopian Yirgacheffe specialty roast with bright, fruity notes.',
-    price: 2490, // $24.90 in cents
+    price: 690, // $6.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=400&h=400&fit=crop',
     type: 'one_time',
@@ -124,7 +124,7 @@ export const products: Product[] = [
     id: 'prod_4',
     name: 'Handmade Italian Pasta',
     description: 'Bronze-cut artisan pasta made with durum wheat semolina.',
-    price: 1290, // $12.90 in cents
+    price: 790, // $7.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1551462147-ff29053bfc14?w=400&h=400&fit=crop',
     type: 'one_time',
@@ -133,7 +133,7 @@ export const products: Product[] = [
     id: 'prod_5',
     name: 'Extra Virgin Olive Oil',
     description: 'Cold-pressed from Tuscan olives with a peppery finish and golden hue.',
-    price: 1990, // $19.90 in cents
+    price: 590, // $5.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=400&h=400&fit=crop',
     type: 'one_time',
