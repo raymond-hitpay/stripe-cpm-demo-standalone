@@ -7,28 +7,42 @@
 import { ProductCard } from '@/components/ProductCard';
 import { Product } from '@/lib/store';
 import Link from 'next/link';
-import { headers } from 'next/headers';
+import { stripe } from '@/lib/stripe';
+import Stripe from 'stripe';
 
-// Fetch subscription products from Stripe API
+// Fetch subscription products directly from Stripe SDK
 async function getSubscriptionProducts(): Promise<Product[]> {
   try {
-    // Dynamically get the host from request headers
-    const headersList = await headers();
-    const host = headersList.get('host') || 'localhost:3001';
-    const protocol = headersList.get('x-forwarded-proto') || 'http';
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${protocol}://${host}`;
-
-    const response = await fetch(`${baseUrl}/api/products?type=recurring`, {
-      cache: 'no-store',
+    const prices = await stripe.prices.list({
+      active: true,
+      type: 'recurring',
+      limit: 100,
+      expand: ['data.product'],
     });
 
-    if (!response.ok) {
-      console.error('Failed to fetch subscription products');
-      return [];
-    }
-
-    const data = await response.json();
-    return data.products || [];
+    return prices.data
+      .filter((price) => {
+        const product = price.product as Stripe.Product;
+        return product && !product.deleted && product.active;
+      })
+      .map((price) => {
+        const product = price.product as Stripe.Product;
+        return {
+          id: product.id,
+          name: product.name,
+          description: product.description || '',
+          price: price.unit_amount || 0,
+          currency: price.currency,
+          image: product.images?.[0] || 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400&h=400&fit=crop',
+          type: 'subscription' as const,
+          stripePriceId: price.id,
+          ...(price.recurring && {
+            interval: price.recurring.interval,
+            intervalCount: price.recurring.interval_count,
+          }),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
   } catch (error) {
     console.error('Error fetching subscription products:', error);
     return [];
