@@ -28,13 +28,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { chargeInvoiceInternal } from '@/app/api/subscription/charge-invoice/route';
-import { STRIPE_SECRET_KEY } from '@/lib/stripe';
-
-// Stripe client for webhook signature verification
-const stripe = new Stripe(STRIPE_SECRET_KEY, {
-  apiVersion: '2025-12-15.clover' as Stripe.LatestApiVersion,
-  typescript: true,
-});
+import { stripe } from '@/lib/stripe';
 
 // Disable body parsing - we need the raw body for signature verification
 export const dynamic = 'force-dynamic';

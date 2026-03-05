@@ -35,13 +35,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { chargeRecurringBilling } from '@/lib/hitpay';
-import { stripe as stripeClover, STRIPE_SECRET_KEY } from '@/lib/stripe';
-
-// Standard Stripe client for invoice/subscription operations
-const stripeStandard = new Stripe(STRIPE_SECRET_KEY, {
-  apiVersion: '2025-12-15.clover' as Stripe.LatestApiVersion,
-  typescript: true,
-});
+import { stripe } from '@/lib/stripe';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,7 +76,7 @@ export async function chargeInvoiceInternal(
 
   // Step 1: Get the invoice
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const invoice = await stripeStandard.invoices.retrieve(invoiceId, {
+  const invoice = await stripe.invoices.retrieve(invoiceId, {
     expand: ['customer', 'subscription'],
   }) as any;
 
@@ -208,7 +202,7 @@ export async function chargeInvoiceInternal(
   if (cpmTypeId) {
     try {
       // Create PaymentMethod with custom type
-      const paymentMethod = await stripeClover.paymentMethods.create({
+      const paymentMethod = await stripe.paymentMethods.create({
         type: 'custom',
         custom: {
           type: cpmTypeId,
@@ -219,13 +213,13 @@ export async function chargeInvoiceInternal(
       console.log(`${logPrefix} Created PaymentMethod: ${paymentMethodId}`);
 
       // Attach PaymentMethod to customer
-      await stripeClover.paymentMethods.attach(paymentMethod.id, {
+      await stripe.paymentMethods.attach(paymentMethod.id, {
         customer: customer.id,
       });
       console.log(`${logPrefix} Attached PaymentMethod to customer: ${customer.id}`);
 
       // Record the payment via Payment Records API
-      const paymentRecord = await stripeClover.paymentRecords.reportPayment({
+      const paymentRecord = await stripe.paymentRecords.reportPayment({
         amount_requested: {
           value: invoice.amount_due,
           currency: invoice.currency,
@@ -262,7 +256,7 @@ export async function chargeInvoiceInternal(
 
       // Attach payment record to invoice - this marks invoice as paid & activates subscription
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (stripeClover.invoices as any).attachPayment(invoiceId, {
+      await (stripe.invoices as any).attachPayment(invoiceId, {
         payment_record: paymentRecord.id,
       });
       console.log(`${logPrefix} Attached Payment Record to invoice: ${invoiceId}`);
@@ -280,7 +274,7 @@ export async function chargeInvoiceInternal(
   console.log(`${logPrefix} Payment recorded via Payment Records API`);
 
   // Update invoice metadata
-  await stripeStandard.invoices.update(invoiceId, {
+  await stripe.invoices.update(invoiceId, {
     metadata: {
       hitpay_payment_id: hitpayCharge.payment_id,
       hitpay_recurring_billing_id: recurringBillingId,
@@ -298,7 +292,7 @@ export async function chargeInvoiceInternal(
     ? (typeof invoice.subscription === 'string' ? invoice.subscription : (invoice.subscription as Stripe.Subscription).id)
     : null;
   const subscription = subscriptionId
-    ? await stripeStandard.subscriptions.retrieve(subscriptionId)
+    ? await stripe.subscriptions.retrieve(subscriptionId)
     : null;
 
   return {

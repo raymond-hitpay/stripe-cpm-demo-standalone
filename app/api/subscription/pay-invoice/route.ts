@@ -21,13 +21,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { stripe as stripeClover } from '@/lib/stripe';
-
-// Standard Stripe client for invoice/subscription operations
-const stripeStandard = new Stripe(STRIPE_SECRET_KEY, {
-  apiVersion: '2025-12-15.clover' as Stripe.LatestApiVersion,
-  typescript: true,
-});
+import { stripe } from '@/lib/stripe';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,7 +51,7 @@ export async function POST(request: NextRequest) {
 
     // Get the invoice with customer and subscription expanded
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const invoice = await stripeStandard.invoices.retrieve(invoiceId, {
+    const invoice = await stripe.invoices.retrieve(invoiceId, {
       expand: ['customer', 'subscription'],
     }) as any;
 
@@ -66,7 +60,7 @@ export async function POST(request: NextRequest) {
       console.log(`[Pay Invoice] Invoice already paid: ${invoiceId}`);
 
       const subscription = invoice.subscription
-        ? await stripeStandard.subscriptions.retrieve(invoice.subscription as string)
+        ? await stripe.subscriptions.retrieve(invoice.subscription as string)
         : null;
 
       return NextResponse.json({
@@ -115,7 +109,7 @@ export async function POST(request: NextRequest) {
     if (customPaymentMethodTypeId) {
       try {
         // Step 1: Create custom PaymentMethod
-        const paymentMethod = await stripeClover.paymentMethods.create({
+        const paymentMethod = await stripe.paymentMethods.create({
           type: 'custom',
           custom: {
             type: customPaymentMethodTypeId,
@@ -125,13 +119,13 @@ export async function POST(request: NextRequest) {
         console.log(`[Pay Invoice] Created PaymentMethod: ${paymentMethodId}`);
 
         // Step 2: Attach PaymentMethod to customer
-        await stripeClover.paymentMethods.attach(paymentMethod.id, {
+        await stripe.paymentMethods.attach(paymentMethod.id, {
           customer: customer.id,
         });
         console.log(`[Pay Invoice] Attached PaymentMethod to customer: ${customer.id}`);
 
         // Step 3: Record payment via Payment Records API
-        const paymentRecord = await stripeClover.paymentRecords.reportPayment({
+        const paymentRecord = await stripe.paymentRecords.reportPayment({
           amount_requested: {
             value: invoice.amount_due,
             currency: invoice.currency,
@@ -167,7 +161,7 @@ export async function POST(request: NextRequest) {
 
         // Step 4: Attach Payment Record to invoice (this marks it as paid)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (stripeClover.invoices as any).attachPayment(invoiceId, {
+        await (stripe.invoices as any).attachPayment(invoiceId, {
           payment_record: paymentRecord.id,
         });
         console.log(`[Pay Invoice] Attached Payment Record to invoice: ${invoiceId}`);
@@ -175,20 +169,20 @@ export async function POST(request: NextRequest) {
         console.error('[Pay Invoice] Payment record error:', recordError);
         // If Payment Records fails, fall back to paid_out_of_band
         console.log('[Pay Invoice] Falling back to paid_out_of_band');
-        await stripeStandard.invoices.pay(invoiceId, {
+        await stripe.invoices.pay(invoiceId, {
           paid_out_of_band: true,
         });
       }
     } else {
       // No CPM type provided, use simple paid_out_of_band
       console.log('[Pay Invoice] No CPM type provided, using paid_out_of_band');
-      await stripeStandard.invoices.pay(invoiceId, {
+      await stripe.invoices.pay(invoiceId, {
         paid_out_of_band: true,
       });
     }
 
     // Update invoice metadata with payment references
-    await stripeStandard.invoices.update(invoiceId, {
+    await stripe.invoices.update(invoiceId, {
       metadata: {
         hitpay_payment_id: hitpayPaymentId || '',
         payment_method: paymentRecordId ? 'hitpay_payment_record' : 'hitpay_out_of_band',
@@ -200,9 +194,9 @@ export async function POST(request: NextRequest) {
     });
 
     // Get updated invoice and subscription status
-    const updatedInvoice = await stripeStandard.invoices.retrieve(invoiceId) as any;
+    const updatedInvoice = await stripe.invoices.retrieve(invoiceId) as any;
     const subscription = subscriptionId
-      ? await stripeStandard.subscriptions.retrieve(subscriptionId)
+      ? await stripe.subscriptions.retrieve(subscriptionId)
       : null;
 
     console.log(`[Pay Invoice] Invoice status: ${updatedInvoice.status}, Subscription status: ${subscription?.status}`);

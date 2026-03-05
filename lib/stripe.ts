@@ -26,9 +26,6 @@ if (!resolvedSecretKey) {
   );
 }
 
-/** Resolved Stripe secret key for the active environment. */
-export const STRIPE_SECRET_KEY = resolvedSecretKey;
-
 /**
  * Stripe client instance configured for Custom Payment Methods.
  *
