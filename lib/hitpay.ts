@@ -56,6 +56,31 @@ export interface HitPayPaymentRequest {
 }
 
 /**
+ * Individual payment object within a payment request.
+ * Returned in the `payments` array when a payment request has been paid.
+ */
+export interface HitPayPayment {
+  /** Unique payment/transaction ID (e.g., "a12b19e4-3b07-4ecc-a621-57a751203fca") */
+  id?: string;
+  /** Alternative field name for payment ID */
+  payment_id?: string;
+  /** Payment request ID this payment belongs to */
+  payment_request_id?: string;
+  /** Payment method used (e.g., "paynow_online", "shopee_pay") */
+  payment_type?: string;
+  /** Payment status */
+  status?: 'succeeded' | 'pending' | 'failed' | 'refunded';
+  /** Amount paid */
+  amount?: string;
+  /** Currency */
+  currency?: string;
+  /** Your reference number */
+  reference_number?: string | null;
+  /** Payment timestamp */
+  created_at?: string;
+}
+
+/**
  * Response from HitPay payment request API.
  */
 export interface HitPayPaymentResponse {
@@ -89,7 +114,19 @@ export interface HitPayPaymentResponse {
     qr_code: string;
     /** When the QR code expires */
     qr_code_expiry: string | null;
+    /** When charge currency differs: amount on QR (sometimes nested here) */
+    qr_amount?: string;
+    qr_currency?: string;
+    fx_rate?: string;
   };
+  /** When charge currency differs from request currency: amount shown on QR */
+  qr_amount?: string;
+  /** When charge currency differs: currency of the QR (e.g. "vnd", "sgd") */
+  qr_currency?: string;
+  /** When charge currency differs: exchange rate (1 request currency = fx_rate qr currency) */
+  fx_rate?: string;
+  /** Array of payments (present when payment request has been paid) */
+  payments?: HitPayPayment[];
 }
 
 /**

@@ -87,17 +87,29 @@ export const useCartStore = create<CartStore>()(
     }),
     {
       name: 'cart-storage',
+      merge: (persistedState, currentState) => {
+        const state = { ...currentState, ...(persistedState as object) } as CartStore;
+        if (state.items?.length) {
+          state.items = state.items
+            .map((item) => {
+              const product = products.find((p) => p.id === item.id);
+              return product ? { ...product, quantity: item.quantity } : item;
+            })
+            .filter((item) => products.some((p) => p.id === item.id));
+        }
+        return state;
+      },
     }
   )
 );
 
-// Dummy product data (all prices below $10)
+// Dummy product data (prices $2–$5, plus one at $7.90 for demo/default cart)
 export const products: Product[] = [
   {
     id: 'prod_1',
     name: 'Artisan Sourdough Bread',
     description: 'Freshly baked sourdough with a crispy golden crust and soft, tangy interior.',
-    price: 890, // $8.90 in cents
+    price: 390, // $3.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=400&h=400&fit=crop',
     type: 'one_time',
@@ -106,7 +118,7 @@ export const products: Product[] = [
     id: 'prod_2',
     name: 'Raw Manuka Honey',
     description: 'Premium New Zealand Manuka honey with rich, earthy flavour and natural benefits.',
-    price: 490, // $4.90 in cents
+    price: 290, // $2.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1587049352846-4a222e784d38?w=400&h=400&fit=crop',
     type: 'one_time',
@@ -115,7 +127,7 @@ export const products: Product[] = [
     id: 'prod_3',
     name: 'Single Origin Coffee Beans',
     description: 'Ethiopian Yirgacheffe specialty roast with bright, fruity notes.',
-    price: 690, // $6.90 in cents
+    price: 290, // $2.90 in cents (default/demo cart item)
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=400&h=400&fit=crop',
     type: 'one_time',
@@ -124,7 +136,7 @@ export const products: Product[] = [
     id: 'prod_4',
     name: 'Handmade Italian Pasta',
     description: 'Bronze-cut artisan pasta made with durum wheat semolina.',
-    price: 790, // $7.90 in cents
+    price: 490, // $4.90 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1551462147-ff29053bfc14?w=400&h=400&fit=crop',
     type: 'one_time',
@@ -133,7 +145,7 @@ export const products: Product[] = [
     id: 'prod_5',
     name: 'Extra Virgin Olive Oil',
     description: 'Cold-pressed from Tuscan olives with a peppery finish and golden hue.',
-    price: 590, // $5.90 in cents
+    price: 500, // $5.00 in cents
     currency: 'sgd',
     image: 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=400&h=400&fit=crop',
     type: 'one_time',

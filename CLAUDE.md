@@ -228,7 +228,7 @@ Only works with CPMs that have `chargeAutomatically: true` (e.g., ShopeePay, Gra
    → Records payment in Stripe via Payment Records API
 9. Redirect to /subscribe/success
 10. On next billing cycle:
-    → Stripe creates invoice and fires `invoice.payment_action_required` webhook
+    → Stripe creates invoice and fires `invoice.payment_attempt_required` webhook
     → Stripe webhook handler at /api/stripe/webhook receives event
     → Handler charges saved HitPay payment method automatically
     → Records payment in Stripe via Payment Records API
@@ -335,7 +335,7 @@ Subscription products are fetched **automatically** from your Stripe Dashboard -
 
 ## Stripe Webhook Setup (Auto-Charge Renewals)
 
-The Stripe webhook at `/api/stripe/webhook` automatically handles subscription renewals for auto-charge subscriptions. When Stripe creates a new invoice, it fires the `invoice.payment_action_required` event, and the webhook charges the saved HitPay payment method.
+The Stripe webhook at `/api/stripe/webhook` automatically handles subscription renewals for auto-charge subscriptions. When Stripe creates a new invoice, it fires the `invoice.payment_attempt_required` event, and the webhook charges the saved HitPay payment method.
 
 ### Setup Steps
 
@@ -345,7 +345,7 @@ The Stripe webhook at `/api/stripe/webhook` automatically handles subscription r
    - Go to Stripe Dashboard > Developers > Webhooks
    - Click "Add endpoint"
    - Enter your webhook URL: `https://yoursite.com/api/stripe/webhook`
-   - Select event: `invoice.payment_action_required`
+   - Select event: `invoice.payment_attempt_required`
    - Click "Add endpoint"
 
 3. **Copy the signing secret:**
@@ -368,7 +368,7 @@ stripe login
 stripe listen --forward-to localhost:3000/api/stripe/webhook
 
 # In another terminal, trigger a test event
-stripe trigger invoice.payment_action_required
+stripe trigger invoice.payment_attempt_required
 ```
 
 ### Webhook Flow
@@ -376,7 +376,7 @@ stripe trigger invoice.payment_action_required
 ```
 Stripe creates invoice (subscription renewal)
         ↓
-Stripe fires invoice.payment_action_required
+Stripe fires invoice.payment_attempt_required
         ↓
 /api/stripe/webhook receives event
         ↓

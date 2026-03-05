@@ -5,7 +5,7 @@
  * This endpoint can be used for demo/testing purposes.
  *
  * For production, use the Stripe webhook at /api/stripe/webhook which listens for
- * `invoice.payment_action_required` events and automatically charges via HitPay.
+ * `invoice.payment_attempt_required` events and automatically charges via HitPay.
  *
  * Flow:
  * 1. Get invoice from Stripe

@@ -15,6 +15,11 @@ interface QRCodeData {
   qrCode: string;
   paymentRequestId: string;
   checkoutUrl: string;
+  amount?: string;
+  currency?: string;
+  qrAmount?: string;
+  qrCurrency?: string;
+  fxRate?: string;
 }
 
 interface EmbeddedQRContentProps {
@@ -59,6 +64,24 @@ export function EmbeddedQRContent({
     }).format(price / 100);
   };
 
+  /** Format amount string with currency code */
+  const formatAmountWithCurrency = (amountStr: string, currencyCode: string) => {
+    const num = parseFloat(amountStr);
+    if (Number.isNaN(num)) return `${amountStr} ${currencyCode.toUpperCase()}`;
+    return new Intl.NumberFormat('en-SG', {
+      style: 'currency',
+      currency: currencyCode.toUpperCase(),
+    }).format(num);
+  };
+
+  const hasOriginalAmount =
+    qrCodeData?.amount != null && qrCodeData?.currency != null;
+  const hasConvertedAmount =
+    qrCodeData?.qrAmount != null && qrCodeData?.qrCurrency != null;
+  const hasFxRate = qrCodeData?.fxRate != null;
+  /** Show amount/FX block when we have at least original amount from API */
+  const hasFxInfo = hasOriginalAmount;
+
   // Loading state
   if (isLoadingQR) {
     return (
@@ -73,9 +96,36 @@ export function EmbeddedQRContent({
   if (qrCodeData) {
     return (
       <div className="flex flex-col items-center py-4">
-        <p className="text-lg font-bold text-indigo-600 mb-3">
-          {formatPrice(amount)}
-        </p>
+        {hasFxInfo ? (
+          <div className="w-full space-y-1 text-left mb-3 p-3 bg-gray-50 rounded-lg">
+            <p className="text-xs text-gray-600">Original amount (payment request currency)</p>
+            <p className="text-base font-bold text-indigo-600">
+              {formatAmountWithCurrency(qrCodeData.amount!, qrCodeData.currency!)}
+            </p>
+            {hasConvertedAmount && (
+              <>
+                <p className="text-xs text-gray-600 mt-2">Converted amount (QR currency)</p>
+                <p className="text-base font-bold text-indigo-600">
+                  {formatAmountWithCurrency(qrCodeData.qrAmount!, qrCodeData.qrCurrency!)}
+                </p>
+              </>
+            )}
+            {hasFxRate && (
+              <p className="text-xs text-gray-500 mt-2">
+                FX rate: 1 {qrCodeData.currency!.toUpperCase()} :{' '}
+                {Number(qrCodeData.fxRate!).toLocaleString('en-SG', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 6,
+                })}{' '}
+                {(qrCodeData.qrCurrency ?? qrCodeData.currency)!.toUpperCase()}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-lg font-bold text-indigo-600 mb-3">
+            {formatPrice(amount)}
+          </p>
+        )}
 
         <div className="bg-white p-3 rounded-lg border border-gray-200 mb-3">
           <QRCodeSVG value={qrCodeData.qrCode} size={180} level="M" />

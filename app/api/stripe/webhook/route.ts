@@ -4,12 +4,12 @@
  * Stripe webhook handler for automatic subscription invoice charging.
  *
  * This endpoint receives webhook events from Stripe and processes them accordingly.
- * The primary use case is handling `invoice.payment_action_required` events for
+ * The primary use case is handling `invoice.payment_attempt_required` events for
  * auto-charge subscriptions, which triggers automatic charging via HitPay.
  *
  * Webhook Flow:
  * 1. Stripe creates an invoice when a subscription renews
- * 2. Stripe fires `invoice.payment_action_required` event
+ * 2. Stripe fires `invoice.payment_attempt_required` event
  * 3. This webhook receives the event and verifies the signature
  * 4. For customers with `hitpay_recurring_billing_id`, charges via HitPay
  * 5. Records payment in Stripe via Payment Records API
@@ -19,9 +19,9 @@
  * 1. Deploy your app to get a public URL
  * 2. Create webhook in Stripe Dashboard:
  *    - URL: https://yoursite.com/api/stripe/webhook
- *    - Events: invoice.payment_action_required
+ *    - Events: invoice.payment_attempt_required
  * 3. Copy webhook signing secret to STRIPE_WEBHOOK_SECRET
- * 4. Test with Stripe CLI: stripe trigger invoice.payment_action_required
+ * 4. Test with Stripe CLI: stripe trigger invoice.payment_attempt_required
  *
  * @see https://docs.stripe.com/billing/subscriptions/third-party-payment-processing
  */
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
 
     // Handle the event
     switch (event.type) {
-      case 'invoice.payment_action_required': {
+      case 'invoice.payment_attempt_required': {
         // This event fires when an invoice is finalized and requires payment
         // via an external payment processor (our HitPay integration)
         const invoice = event.data.object as Stripe.Invoice;

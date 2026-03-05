@@ -30,7 +30,7 @@ import {
   useStripe,
   useElements,
 } from '@stripe/react-stripe-js';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
@@ -83,6 +83,16 @@ interface QRCodeData {
   paymentRequestId: string;
   /** HitPay checkout URL for fallback */
   checkoutUrl: string;
+  /** Payment request amount (from HitPay) */
+  amount?: string;
+  /** Payment request currency (e.g. "sgd") */
+  currency?: string;
+  /** When FX applies: amount on QR */
+  qrAmount?: string;
+  /** When FX applies: currency on QR (e.g. "vnd") */
+  qrCurrency?: string;
+  /** When FX applies: 1 request = fxRate qr */
+  fxRate?: string;
 }
 
 // =============================================================================
@@ -117,6 +127,7 @@ export function CheckoutForm({
     'idle' | 'pending' | 'completed' | 'failed'
   >('idle');
   const [pollAttempts, setPollAttempts] = useState(0);
+  const pollAttemptsRef = useRef(0);
   // Fallback checkout URL when QR fails
   const [fallbackCheckoutUrl, setFallbackCheckoutUrl] = useState<string | null>(null);
 
@@ -197,6 +208,11 @@ export function CheckoutForm({
         qrCode: data.qrCode,
         paymentRequestId: data.paymentRequestId,
         checkoutUrl: data.checkoutUrl,
+        ...(data.amount != null && { amount: data.amount }),
+        ...(data.currency != null && { currency: data.currency }),
+        ...(data.qrAmount != null && { qrAmount: data.qrAmount }),
+        ...(data.qrCurrency != null && { qrCurrency: data.qrCurrency }),
+        ...(data.fxRate != null && { fxRate: data.fxRate }),
       });
       setPaymentStatus('pending');
       console.log(
@@ -241,29 +257,31 @@ export function CheckoutForm({
   /**
    * Effect: Poll for payment status while QR code is displayed.
    *
-   * Polls the check-status endpoint every POLL_INTERVAL_MS until:
-   * - Payment is completed (redirect to success)
-   * - Payment fails/expires (show error, allow retry)
-   * - Max attempts reached (show timeout message)
+   * Uses a ref for attempt count so the interval is stable (not recreated every 3s).
+   * Polls until: completed (redirect), failed/expired (show error), or max attempts.
    */
   useEffect(() => {
     if (!qrCodeData?.paymentRequestId || paymentStatus !== 'pending') {
       return;
     }
 
-    // Check if we've exceeded max attempts
-    if (pollAttempts >= MAX_POLL_ATTEMPTS) {
-      setPaymentStatus('failed');
-      setErrorMessage(
-        'Payment verification timed out. If you completed the payment, ' +
-          'please contact support with your reference number: ' +
-          paymentIntentId
-      );
-      return;
-    }
+    pollAttemptsRef.current = 0;
+    setPollAttempts(0);
 
     const pollInterval = setInterval(async () => {
-      setPollAttempts((prev) => prev + 1);
+      pollAttemptsRef.current += 1;
+      setPollAttempts(pollAttemptsRef.current);
+
+      if (pollAttemptsRef.current >= MAX_POLL_ATTEMPTS) {
+        clearInterval(pollInterval);
+        setPaymentStatus('failed');
+        setErrorMessage(
+          'Payment verification timed out. If you completed the payment, ' +
+            'please contact support with your reference number: ' +
+            paymentIntentId
+        );
+        return;
+      }
 
       try {
         const response = await fetch('/api/payment/check-status', {
@@ -276,49 +294,46 @@ export function CheckoutForm({
           }),
         });
 
-        // Don't fail on HTTP errors - keep polling
-        // Network issues are transient, webhook will catch it if polling fails
         if (!response.ok) {
-          console.warn('[Payment Status] API error:', response.status);
+          console.warn('[Payment Status] API error:', response.status, await response.text());
           return;
         }
 
         const data = await response.json();
         console.log('[Payment Status]', data);
 
-        if (data.status === 'completed') {
+        const statusLower = (data.status ?? '').toLowerCase();
+        if (statusLower === 'completed') {
           setPaymentStatus('completed');
           clearInterval(pollInterval);
 
-          // Redirect to success page with payment details
+          const hitpayPaymentId = data.hitpay?.paymentId || qrCodeData.paymentRequestId;
           const params = new URLSearchParams({
             method: selectedPaymentConfig?.displayName.toLowerCase() || 'custom',
             payment_id: paymentIntentId,
-            hitpay_id: qrCodeData.paymentRequestId,
+            hitpay_id: hitpayPaymentId,
             payment_record_id: data.stripe?.paymentRecordId || '',
           });
           router.push(`/shop/success?${params.toString()}`);
-        } else if (data.status === 'failed' || data.status === 'expired') {
+        } else if (statusLower === 'failed' || statusLower === 'expired') {
           setPaymentStatus('failed');
           clearInterval(pollInterval);
           setErrorMessage('Payment failed or expired. Please try again.');
           setQRCodeData(null);
         }
       } catch (error) {
-        // Log but don't fail - keep polling on network errors
         console.error('Error polling payment status:', error);
       }
     }, POLL_INTERVAL_MS);
 
     return () => clearInterval(pollInterval);
   }, [
-    qrCodeData,
+    qrCodeData?.paymentRequestId,
     paymentStatus,
     paymentIntentId,
     router,
     selectedPaymentMethodType,
-    selectedPaymentConfig,
-    pollAttempts,
+    selectedPaymentConfig?.displayName,
   ]);
 
   /**

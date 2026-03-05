@@ -23,7 +23,7 @@ import {
   useStripe,
   useElements,
 } from '@stripe/react-stripe-js';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
@@ -74,6 +74,16 @@ interface QRCodeData {
   qrCode: string;
   paymentRequestId: string;
   checkoutUrl: string;
+  /** Payment request amount (from HitPay) */
+  amount?: string;
+  /** Payment request currency (e.g. "sgd") */
+  currency?: string;
+  /** When FX applies: amount on QR */
+  qrAmount?: string;
+  /** When FX applies: currency on QR (e.g. "vnd") */
+  qrCurrency?: string;
+  /** When FX applies: 1 request = fxRate qr */
+  fxRate?: string;
 }
 
 // =============================================================================
@@ -113,6 +123,7 @@ export function SubscriptionCheckoutForm({
   const [isLoadingQR, setIsLoadingQR] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'idle' | 'pending' | 'completed' | 'failed'>('idle');
   const [pollAttempts, setPollAttempts] = useState(0);
+  const pollAttemptsRef = useRef(0);
   const [fallbackCheckoutUrl, setFallbackCheckoutUrl] = useState<string | null>(null);
 
   // Check if the selected payment method is a custom payment method
@@ -189,6 +200,11 @@ export function SubscriptionCheckoutForm({
         qrCode: data.qrCode,
         paymentRequestId: data.paymentRequestId,
         checkoutUrl: data.checkoutUrl,
+        ...(data.amount != null && { amount: data.amount }),
+        ...(data.currency != null && { currency: data.currency }),
+        ...(data.qrAmount != null && { qrAmount: data.qrAmount }),
+        ...(data.qrCurrency != null && { qrCurrency: data.qrCurrency }),
+        ...(data.fxRate != null && { fxRate: data.fxRate }),
       });
       setPaymentStatus('pending');
       console.log(
@@ -235,21 +251,25 @@ export function SubscriptionCheckoutForm({
       return;
     }
 
-    if (pollAttempts >= MAX_POLL_ATTEMPTS) {
-      setPaymentStatus('failed');
-      setErrorMessage(
-        'Payment verification timed out. If you completed the payment, ' +
-          'please contact support with your reference: ' +
-          `sub_${subscriptionId}_inv_${invoiceId}`
-      );
-      return;
-    }
+    pollAttemptsRef.current = 0;
+    setPollAttempts(0);
 
     const pollInterval = setInterval(async () => {
-      setPollAttempts((prev) => prev + 1);
+      pollAttemptsRef.current += 1;
+      setPollAttempts(pollAttemptsRef.current);
+
+      if (pollAttemptsRef.current >= MAX_POLL_ATTEMPTS) {
+        clearInterval(pollInterval);
+        setPaymentStatus('failed');
+        setErrorMessage(
+          'Payment verification timed out. If you completed the payment, ' +
+            'please contact support with your reference: ' +
+            `sub_${subscriptionId}_inv_${invoiceId}`
+        );
+        return;
+      }
 
       try {
-        // Check HitPay payment status
         const statusResponse = await fetch('/api/hitpay/status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -266,18 +286,21 @@ export function SubscriptionCheckoutForm({
         const statusData = await statusResponse.json();
         console.log('[Subscription HitPay] Status:', statusData);
 
-        if (statusData.status === 'completed') {
+        const statusLower = (statusData.status ?? '').toLowerCase();
+        if (statusLower === 'completed') {
           setPaymentStatus('completed');
           clearInterval(pollInterval);
 
-          // Mark the invoice as paid
+          const hitpayPaymentId = statusData.paymentId || qrCodeData.paymentRequestId;
+          console.log('[Subscription HitPay] Payment ID:', hitpayPaymentId);
+
           try {
             const payInvoiceResponse = await fetch('/api/subscription/pay-invoice', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 invoiceId,
-                hitpayPaymentId: qrCodeData.paymentRequestId,
+                hitpayPaymentId,
                 customPaymentMethodTypeId: selectedPaymentMethodType,
               }),
             });
@@ -292,14 +315,13 @@ export function SubscriptionCheckoutForm({
             console.error('[Subscription HitPay] Pay invoice error:', payError);
           }
 
-          // Redirect to success page
           const params = new URLSearchParams({
             subscription_id: subscriptionId,
             method: selectedPaymentConfig?.displayName.toLowerCase() || 'custom',
-            hitpay_id: qrCodeData.paymentRequestId,
+            hitpay_id: hitpayPaymentId,
           });
           router.push(`/subscribe/success?${params.toString()}`);
-        } else if (statusData.status === 'failed' || statusData.status === 'expired') {
+        } else if (statusLower === 'failed' || statusLower === 'expired') {
           setPaymentStatus('failed');
           clearInterval(pollInterval);
           setErrorMessage('Payment failed or expired. Please try again.');
@@ -312,13 +334,13 @@ export function SubscriptionCheckoutForm({
 
     return () => clearInterval(pollInterval);
   }, [
-    qrCodeData,
+    qrCodeData?.paymentRequestId,
     paymentStatus,
     subscriptionId,
     invoiceId,
     router,
-    selectedPaymentConfig,
-    pollAttempts,
+    selectedPaymentMethodType,
+    selectedPaymentConfig?.displayName,
   ]);
 
   /**
