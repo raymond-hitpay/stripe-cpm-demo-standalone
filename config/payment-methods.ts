@@ -131,9 +131,9 @@ const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
   // },
   {
     ids: {
-      sandbox:    'cpmt_1T4caMH0EH9sk7Na1F8yoeOy',
-      staging:    '',
-      production: '',
+      sandbox:    'cpmt_1SrU7yH0EH9sk7Nau7jdZbFp',
+      staging:    'cpmt_1SrU7yH0EH9sk7Nau7jdZbFp',
+      production: 'cpmt_1T7SetAMHowMCIhZxsx3LL7s',
     },
     hitpayMethod: 'shopee_pay',
     displayName: 'ShopeePay',
