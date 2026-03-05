@@ -153,6 +153,17 @@ const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
   },
   {
     ids: {
+      sandbox:    'cpmt_1T7Sk5H0EH9sk7Naz1EnUWj1',
+      staging:    'cpmt_1T7Sk5H0EH9sk7Naz1EnUWj1',
+      production: 'cpmt_1T7SjcAMHowMCIhZDTzEpdKW',
+    },
+    hitpayMethod: 'gcash_qr',
+    displayName: 'GCash',
+    supportsOneTime: true,      // Not for one-time payments
+    chargeAutomatically: false,   // Supports save & charge via HitPay tokenization
+  },
+  {
+    ids: {
       sandbox:    'cpmt_1T74HqH0EH9sk7NaOPh7nxOr',
       staging:    'cpmt_1T74HqH0EH9sk7NaOPh7nxOr',
       production: 'cpmt_1T72UHAMHowMCIhZlcjUE1Fz',
