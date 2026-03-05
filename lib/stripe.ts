@@ -13,30 +13,32 @@
  */
 import Stripe from 'stripe';
 
-const stripeEnv = process.env.NEXT_PUBLIC_HITPAY_ENV || 'sandbox';
-const resolvedSecretKey =
-  stripeEnv === 'production' ? process.env.STRIPE_SECRET_KEY_PRODUCTION
-  : stripeEnv === 'staging'  ? process.env.STRIPE_SECRET_KEY_STAGING
-  : process.env.STRIPE_SECRET_KEY_SANDBOX;
+function getStripeClient() {
+  const stripeEnv = process.env.NEXT_PUBLIC_HITPAY_ENV || 'sandbox';
+  const resolvedSecretKey =
+    stripeEnv === 'production' ? process.env.STRIPE_SECRET_KEY_PRODUCTION
+    : stripeEnv === 'staging'  ? process.env.STRIPE_SECRET_KEY_STAGING
+    : process.env.STRIPE_SECRET_KEY_SANDBOX;
 
-if (!resolvedSecretKey) {
-  throw new Error(
-    `STRIPE_SECRET_KEY_${stripeEnv.toUpperCase()} is not set. Please configure it in your .env.local file.\n` +
-      'Get your secret key from: https://dashboard.stripe.com/apikeys'
-  );
+  if (!resolvedSecretKey) {
+    throw new Error(
+      `STRIPE_SECRET_KEY_${stripeEnv.toUpperCase()} is not set. Please configure it in your .env.local file.\n` +
+        'Get your secret key from: https://dashboard.stripe.com/apikeys'
+    );
+  }
+
+  // @ts-expect-error - Beta API version for Payment Records (stripe.paymentRecords.reportPayment)
+  return new Stripe(resolvedSecretKey, { apiVersion: '2025-12-15.clover', typescript: true });
 }
 
 /**
  * Stripe client instance configured for Custom Payment Methods.
  *
  * Uses a beta API version that includes the Payment Records API.
- * The @ts-expect-error is needed because this beta version is not
- * recognized by the current @stripe/stripe-js TypeScript definitions.
+ * Lazily initialized to avoid build-time errors when env vars are not set.
  */
-export const stripe = new Stripe(resolvedSecretKey, {
-  // The Payment Records API requires this beta API version.
-  // The 'clover' tag enables custom payment method features.
-  // @ts-expect-error - Beta API version for Payment Records (stripe.paymentRecords.reportPayment)
-  apiVersion: '2025-12-15.clover',
-  typescript: true,
+export const stripe = new Proxy({} as Stripe, {
+  get(_target, prop) {
+    return getStripeClient()[prop as keyof Stripe];
+  },
 });
