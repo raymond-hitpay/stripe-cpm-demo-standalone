@@ -38,11 +38,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getHitPayPaymentStatus } from '@/lib/hitpay';
 import { stripe } from '@/lib/stripe';
+import { getOneTimeCpms } from '@/config/payment-methods';
 
 export const dynamic = 'force-dynamic';
 
-// Custom Payment Method Type ID - should match NEXT_PUBLIC_CPM_TYPE_ID
-const CPM_TYPE_ID = process.env.NEXT_PUBLIC_CPM_TYPE_ID || 'cpmt_xxx';
+// Fallback CPM Type ID if frontend sends a generic type (e.g. "custom_payment_method")
+function resolveCpmTypeId(customPaymentMethodTypeId: string | undefined): string {
+  if (customPaymentMethodTypeId?.startsWith('cpmt_')) {
+    return customPaymentMethodTypeId;
+  }
+  const oneTimeCpms = getOneTimeCpms();
+  if (oneTimeCpms.length > 0) {
+    return oneTimeCpms[0].id;
+  }
+  return process.env.NEXT_PUBLIC_CPM_TYPE_ID || 'cpmt_xxx';
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -84,8 +94,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use the provided CPM Type ID or fall back to env variable
-    const cpmTypeId = customPaymentMethodTypeId || CPM_TYPE_ID;
+    // Use the provided CPM Type ID or resolve from config (Payment Element may send generic type)
+    const cpmTypeId = resolveCpmTypeId(customPaymentMethodTypeId);
 
     // Step 1: Check HitPay payment status
     console.log(
@@ -93,15 +103,20 @@ export async function POST(request: NextRequest) {
     );
     const hitpayStatus = await getHitPayPaymentStatus(hitpayPaymentRequestId);
 
-    console.log(`[Payment Check] HitPay status: ${hitpayStatus.status}`);
+    const statusLower = hitpayStatus.status?.toLowerCase() ?? '';
+    console.log(`[Payment Check] HitPay status: ${hitpayStatus.status} (normalized: ${statusLower})`);
 
     // Step 2: If payment is completed, record it in Stripe
-    if (hitpayStatus.status === 'completed') {
+    if (statusLower === 'completed') {
       console.log(`[Payment Check] Payment completed, recording in Stripe...`);
 
       // Extract the actual HitPay payment ID (transaction ID) from the payments array
-      // This is the unique identifier like "a12b19e4-3b07-4ecc-a621-57a751203fca"
-      const hitpayPaymentId = hitpayStatus.payments?.[0]?.id || hitpayPaymentRequestId;
+      // HitPay may use 'id' or 'payment_id' in the nested payment object
+      const firstPayment = hitpayStatus.payments?.[0];
+      const hitpayPaymentId =
+        firstPayment?.id ??
+        firstPayment?.payment_id ??
+        hitpayPaymentRequestId;
       console.log(`[Payment Check] HitPay Payment ID: ${hitpayPaymentId}`);
 
       try {
@@ -207,13 +222,12 @@ export async function POST(request: NextRequest) {
         });
       } catch (stripeError: unknown) {
         // If Stripe recording fails, still return success since HitPay payment succeeded
-        // The customer has paid - we just failed to record it in Stripe
         console.error('[Payment Check] Stripe recording error:', stripeError);
+        if (stripeError && typeof stripeError === 'object' && 'raw' in stripeError) {
+          console.error('[Payment Check] Stripe raw error:', (stripeError as { raw?: unknown }).raw);
+        }
 
-        // Extract payment ID for error response too
-        const hitpayPaymentId = hitpayStatus.payments?.[0]?.id || hitpayPaymentRequestId;
-
-        // Update metadata even if payment record creation fails
+        // Update metadata even if payment record creation fails (hitpayPaymentId already in scope)
         // This helps with manual reconciliation
         try {
           await stripe.paymentIntents.update(paymentIntentId, {
@@ -254,9 +268,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Payment still pending or failed/expired
+    // Payment still pending or failed/expired - return normalized status
     return NextResponse.json({
-      status: hitpayStatus.status,
+      status: statusLower || hitpayStatus.status,
       hitpay: {
         id: hitpayStatus.id,
         status: hitpayStatus.status,

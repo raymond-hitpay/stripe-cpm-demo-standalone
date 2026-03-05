@@ -125,7 +125,17 @@ export interface HitPayPaymentResponse {
     qr_code: string;
     /** When the QR code expires */
     qr_code_expiry: string | null;
+    /** When charge currency differs: amount on QR (sometimes nested here) */
+    qr_amount?: string;
+    qr_currency?: string;
+    fx_rate?: string;
   };
+  /** When charge currency differs from request currency: amount shown on QR */
+  qr_amount?: string;
+  /** When charge currency differs: currency of the QR (e.g. "vnd", "sgd") */
+  qr_currency?: string;
+  /** When charge currency differs: exchange rate (1 request currency = fx_rate qr currency) */
+  fx_rate?: string;
   /** Array of payments (present when payment request has been paid) */
   payments?: HitPayPayment[];
 }

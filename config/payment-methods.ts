@@ -130,13 +130,23 @@ const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
     chargeAutomatically: false,  // QR-based, no tokenization support
   },
   {
-    ids: {
-      sandbox:    'cpmt_1SrU7yH0EH9sk7Nau7jdZbFp',
-      staging:    '',
-      production: '',
-    },
-    hitpayMethod: 'shopee_pay',
-    displayName: 'ShopeePay',
+    id: 'cpmt_1T72UHAMHowMCIhZlcjUE1Fz',
+    hitpayMethod: 'qrph_netbank',
+    displayName: 'QR Ph',
+    supportsOneTime: true,       // Shop checkout + out-of-band invoices
+    chargeAutomatically: false,  // QR-based, no tokenization support
+  },
+  {
+    id: 'cpmt_1T72ViAMHowMCIhZQmXzU6RK',
+    hitpayMethod: 'ifpay_qris',
+    displayName: 'QRIS',
+    supportsOneTime: true,       // Shop checkout + out-of-band invoices
+    chargeAutomatically: false,  // QR-based, no tokenization support
+  },
+  {
+    id: 'cpmt_1T72baAMHowMCIhZQz0vBaH0',
+    hitpayMethod: 'zalopay',
+    displayName: 'ZaloPay',
     supportsOneTime: true,       // Shop checkout + out-of-band invoices
     chargeAutomatically: false,  // QR-based, no tokenization support
   },

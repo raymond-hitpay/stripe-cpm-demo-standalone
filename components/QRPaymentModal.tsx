@@ -13,6 +13,11 @@ interface QRCodeData {
   qrCode: string;
   paymentRequestId: string;
   checkoutUrl: string;
+  amount?: string;
+  currency?: string;
+  qrAmount?: string;
+  qrCurrency?: string;
+  fxRate?: string;
 }
 
 interface QRPaymentModalProps {
@@ -62,6 +67,24 @@ export function QRPaymentModal({
       currency: 'SGD',
     }).format(price / 100);
   };
+
+  /** Format amount string with currency code (e.g. "35.64" + "sgd" → "SGD 35.64") */
+  const formatAmountWithCurrency = (amountStr: string, currencyCode: string) => {
+    const num = parseFloat(amountStr);
+    if (Number.isNaN(num)) return `${amountStr} ${currencyCode.toUpperCase()}`;
+    return new Intl.NumberFormat('en-SG', {
+      style: 'currency',
+      currency: currencyCode.toUpperCase(),
+    }).format(num);
+  };
+
+  const hasOriginalAmount =
+    qrCodeData?.amount != null && qrCodeData?.currency != null;
+  const hasConvertedAmount =
+    qrCodeData?.qrAmount != null && qrCodeData?.qrCurrency != null;
+  const hasFxRate = qrCodeData?.fxRate != null;
+  /** Show FX/original-amount block when we have at least original amount from API */
+  const hasFxInfo = hasOriginalAmount;
 
   // Handle ESC key to close modal
   const handleKeyDown = useCallback(
@@ -119,9 +142,40 @@ export function QRPaymentModal({
         <div className="p-6">
           {/* Amount */}
           <div className="text-center mb-6">
-            <p className="text-3xl font-bold text-indigo-600">
-              {formatPrice(amount)}
-            </p>
+            {hasFxInfo ? (
+              <div className="space-y-2 text-left">
+                <p className="text-sm text-gray-600">
+                  Original amount (payment request currency)
+                </p>
+                <p className="text-xl font-bold text-indigo-600">
+                  {formatAmountWithCurrency(qrCodeData!.amount!, qrCodeData!.currency!)}
+                </p>
+                {hasConvertedAmount && (
+                  <>
+                    <p className="text-sm text-gray-600 mt-3">
+                      Converted amount (QR currency)
+                    </p>
+                    <p className="text-xl font-bold text-indigo-600">
+                      {formatAmountWithCurrency(qrCodeData!.qrAmount!, qrCodeData!.qrCurrency!)}
+                    </p>
+                  </>
+                )}
+                {hasFxRate && (
+                  <p className="text-sm text-gray-500 mt-3">
+                    FX rate: 1 {qrCodeData!.currency!.toUpperCase()} :{' '}
+                    {Number(qrCodeData!.fxRate!).toLocaleString('en-SG', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 6,
+                    })}{' '}
+                    {(qrCodeData!.qrCurrency ?? qrCodeData!.currency)!.toUpperCase()}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-3xl font-bold text-indigo-600">
+                {formatPrice(amount)}
+              </p>
+            )}
           </div>
 
           {/* Loading State */}

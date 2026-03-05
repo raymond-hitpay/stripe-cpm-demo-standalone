@@ -21,7 +21,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { stripe as stripeClover, STRIPE_SECRET_KEY } from '@/lib/stripe';
+import { stripe as stripeClover } from '@/lib/stripe';
 
 // Standard Stripe client for invoice/subscription operations
 const stripeStandard = new Stripe(STRIPE_SECRET_KEY, {

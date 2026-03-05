@@ -104,12 +104,38 @@ export async function POST(request: NextRequest) {
 
     console.log(`[HitPay] Created payment request: ${paymentRequest.id} (method: ${hitpayPaymentMethod})`);
 
+    // FX fields may be top-level or nested in qr_code_data (e.g. for QRIS)
+    const qrAmount =
+      paymentRequest.qr_amount ?? paymentRequest.qr_code_data?.qr_amount;
+    const qrCurrency =
+      paymentRequest.qr_currency ?? paymentRequest.qr_code_data?.qr_currency;
+    const fxRate =
+      paymentRequest.fx_rate ?? paymentRequest.qr_code_data?.fx_rate;
+
+    if (qrAmount != null || qrCurrency != null || fxRate != null) {
+      console.log(`[HitPay] FX data: qr_amount=${qrAmount} qr_currency=${qrCurrency} fx_rate=${fxRate}`);
+    } else if (process.env.NODE_ENV === 'development') {
+      // Log response keys to debug missing FX (HitPay may use different structure)
+      const keys = Object.keys(paymentRequest);
+      const qrCodeDataKeys = paymentRequest.qr_code_data
+        ? Object.keys(paymentRequest.qr_code_data)
+        : [];
+      console.log(`[HitPay] Response keys: ${keys.join(', ')}; qr_code_data keys: ${qrCodeDataKeys.join(', ')}`);
+    }
+
     return NextResponse.json({
       paymentRequestId: paymentRequest.id,
       qrCode: paymentRequest.qr_code_data?.qr_code,
       qrCodeExpiry: paymentRequest.qr_code_data?.qr_code_expiry,
       status: paymentRequest.status,
       checkoutUrl: paymentRequest.url,
+      amount: paymentRequest.amount,
+      currency: paymentRequest.currency,
+      ...((qrAmount != null || qrCurrency != null || fxRate != null) && {
+        ...(qrAmount != null && { qrAmount }),
+        ...(qrCurrency != null && { qrCurrency }),
+        ...(fxRate != null && { fxRate }),
+      }),
     });
   } catch (error) {
     console.error('Error creating HitPay payment request:', error);
