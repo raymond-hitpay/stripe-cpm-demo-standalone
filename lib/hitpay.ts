@@ -18,12 +18,23 @@ import crypto from 'crypto';
 
 /**
  * HitPay API base URL based on environment configuration.
- * Set NEXT_PUBLIC_HITPAY_ENV=production for live payments.
+ * Set NEXT_PUBLIC_HITPAY_ENV=sandbox|staging|production
  */
+const hitpayEnv = process.env.NEXT_PUBLIC_HITPAY_ENV || 'sandbox';
 const HITPAY_API_BASE =
-  process.env.NEXT_PUBLIC_HITPAY_ENV === 'production'
-    ? 'https://api.hit-pay.com/v1'
-    : 'https://api.sandbox.hit-pay.com/v1';
+  hitpayEnv === 'production' ? 'https://api.hit-pay.com/v1'
+  : hitpayEnv === 'staging'  ? 'https://api.staging.hit-pay.com/v1'
+  : 'https://api.sandbox.hit-pay.com/v1';
+
+const HITPAY_API_KEY =
+  hitpayEnv === 'production' ? process.env.HITPAY_API_KEY_PRODUCTION
+  : hitpayEnv === 'staging'  ? process.env.HITPAY_API_KEY_STAGING
+  : process.env.HITPAY_API_KEY_SANDBOX;
+
+const HITPAY_SALT =
+  hitpayEnv === 'production' ? process.env.HITPAY_SALT_PRODUCTION
+  : hitpayEnv === 'staging'  ? process.env.HITPAY_SALT_STAGING
+  : process.env.HITPAY_SALT_SANDBOX;
 
 /**
  * Request payload for creating a HitPay payment request.
@@ -53,6 +64,31 @@ export interface HitPayPaymentRequest {
   redirect_url?: string;
   /** Expiry date for the payment request */
   expiry_date?: string;
+}
+
+/**
+ * Individual payment object within a payment request.
+ * Returned in the `payments` array when a payment request has been paid.
+ */
+export interface HitPayPayment {
+  /** Unique payment/transaction ID (e.g., "a12b19e4-3b07-4ecc-a621-57a751203fca") */
+  id?: string;
+  /** Alternative field name for payment ID */
+  payment_id?: string;
+  /** Payment request ID this payment belongs to */
+  payment_request_id?: string;
+  /** Payment method used (e.g., "paynow_online", "shopee_pay") */
+  payment_type?: string;
+  /** Payment status */
+  status?: 'succeeded' | 'pending' | 'failed' | 'refunded';
+  /** Amount paid */
+  amount?: string;
+  /** Currency */
+  currency?: string;
+  /** Your reference number */
+  reference_number?: string | null;
+  /** Payment timestamp */
+  created_at?: string;
 }
 
 /**
@@ -90,6 +126,8 @@ export interface HitPayPaymentResponse {
     /** When the QR code expires */
     qr_code_expiry: string | null;
   };
+  /** Array of payments (present when payment request has been paid) */
+  payments?: HitPayPayment[];
 }
 
 /**
@@ -120,11 +158,11 @@ export interface HitPayPaymentResponse {
 export async function createHitPayPaymentRequest(
   data: HitPayPaymentRequest
 ): Promise<HitPayPaymentResponse> {
-  const apiKey = process.env.HITPAY_API_KEY;
+  const apiKey = HITPAY_API_KEY;
 
   if (!apiKey) {
     throw new Error(
-      'HITPAY_API_KEY is not set. Please configure it in your .env.local file.'
+      `HITPAY_API_KEY_${hitpayEnv.toUpperCase()} is not set. Please configure it in your .env.local file.`
     );
   }
 
@@ -167,11 +205,11 @@ export async function createHitPayPaymentRequest(
 export async function getHitPayPaymentStatus(
   paymentRequestId: string
 ): Promise<HitPayPaymentResponse> {
-  const apiKey = process.env.HITPAY_API_KEY;
+  const apiKey = HITPAY_API_KEY;
 
   if (!apiKey) {
     throw new Error(
-      'HITPAY_API_KEY is not set. Please configure it in your .env.local file.'
+      `HITPAY_API_KEY_${hitpayEnv.toUpperCase()} is not set. Please configure it in your .env.local file.`
     );
   }
 
@@ -224,11 +262,11 @@ export function verifyHitPayWebhook(
   payload: Record<string, string>,
   signature: string
 ): boolean {
-  const salt = process.env.HITPAY_SALT;
+  const salt = HITPAY_SALT;
 
   if (!salt) {
     console.error(
-      '[HitPay] HITPAY_SALT not configured - cannot verify webhooks'
+      `[HitPay] HITPAY_SALT_${hitpayEnv.toUpperCase()} not configured - cannot verify webhooks`
     );
     return false;
   }
@@ -376,11 +414,11 @@ export interface HitPayChargeResponse {
 export async function createRecurringBilling(
   data: HitPayRecurringBillingRequest
 ): Promise<HitPayRecurringBillingResponse> {
-  const apiKey = process.env.HITPAY_API_KEY;
+  const apiKey = HITPAY_API_KEY;
 
   if (!apiKey) {
     throw new Error(
-      'HITPAY_API_KEY is not set. Please configure it in your .env.local file.'
+      `HITPAY_API_KEY_${hitpayEnv.toUpperCase()} is not set. Please configure it in your .env.local file.`
     );
   }
 
@@ -446,11 +484,11 @@ export async function chargeRecurringBilling(
   amount: number,
   currency: string
 ): Promise<HitPayChargeResponse> {
-  const apiKey = process.env.HITPAY_API_KEY;
+  const apiKey = HITPAY_API_KEY;
 
   if (!apiKey) {
     throw new Error(
-      'HITPAY_API_KEY is not set. Please configure it in your .env.local file.'
+      `HITPAY_API_KEY_${hitpayEnv.toUpperCase()} is not set. Please configure it in your .env.local file.`
     );
   }
 
@@ -499,11 +537,11 @@ export async function chargeRecurringBilling(
 export async function getRecurringBilling(
   recurringBillingId: string
 ): Promise<HitPayRecurringBillingResponse> {
-  const apiKey = process.env.HITPAY_API_KEY;
+  const apiKey = HITPAY_API_KEY;
 
   if (!apiKey) {
     throw new Error(
-      'HITPAY_API_KEY is not set. Please configure it in your .env.local file.'
+      `HITPAY_API_KEY_${hitpayEnv.toUpperCase()} is not set. Please configure it in your .env.local file.`
     );
   }
 

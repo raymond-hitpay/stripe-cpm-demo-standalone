@@ -290,11 +290,14 @@ export function CheckoutForm({
           setPaymentStatus('completed');
           clearInterval(pollInterval);
 
+          // Use the actual HitPay payment ID from the response, fallback to payment request ID
+          const hitpayPaymentId = data.hitpay?.paymentId || qrCodeData.paymentRequestId;
+
           // Redirect to success page with payment details
           const params = new URLSearchParams({
             method: selectedPaymentConfig?.displayName.toLowerCase() || 'custom',
             payment_id: paymentIntentId,
-            hitpay_id: qrCodeData.paymentRequestId,
+            hitpay_id: hitpayPaymentId,
             payment_record_id: data.stripe?.paymentRecordId || '',
           });
           router.push(`/shop/success?${params.toString()}`);

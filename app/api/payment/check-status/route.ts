@@ -99,6 +99,11 @@ export async function POST(request: NextRequest) {
     if (hitpayStatus.status === 'completed') {
       console.log(`[Payment Check] Payment completed, recording in Stripe...`);
 
+      // Extract the actual HitPay payment ID (transaction ID) from the payments array
+      // This is the unique identifier like "a12b19e4-3b07-4ecc-a621-57a751203fca"
+      const hitpayPaymentId = hitpayStatus.payments?.[0]?.id || hitpayPaymentRequestId;
+      console.log(`[Payment Check] HitPay Payment ID: ${hitpayPaymentId}`);
+
       try {
         // Get the PaymentIntent
         const paymentIntent =
@@ -113,6 +118,7 @@ export async function POST(request: NextRequest) {
             status: 'completed',
             hitpay: {
               id: hitpayStatus.id,
+              paymentId: hitpayPaymentId,
               status: hitpayStatus.status,
               amount: hitpayStatus.amount,
               currency: hitpayStatus.currency,
@@ -148,7 +154,7 @@ export async function POST(request: NextRequest) {
           processor_details: {
             type: 'custom',
             custom: {
-              payment_reference: hitpayPaymentRequestId,
+              payment_reference: hitpayPaymentId,
             },
           },
           initiated_at: Math.floor(Date.now() / 1000),
@@ -158,7 +164,8 @@ export async function POST(request: NextRequest) {
             guaranteed_at: Math.floor(Date.now() / 1000),
           },
           metadata: {
-            hitpay_payment_id: hitpayPaymentRequestId,
+            hitpay_payment_id: hitpayPaymentId,
+            hitpay_payment_request_id: hitpayPaymentRequestId,
             hitpay_reference: hitpayStatus.reference_number || '',
             stripe_payment_intent_id: paymentIntentId,
             stripe_payment_method_id: paymentMethod.id,
@@ -174,7 +181,8 @@ export async function POST(request: NextRequest) {
         await stripe.paymentIntents.update(paymentIntentId, {
           metadata: {
             external_payment_provider: 'hitpay',
-            external_payment_id: hitpayPaymentRequestId,
+            hitpay_payment_id: hitpayPaymentId,
+            hitpay_payment_request_id: hitpayPaymentRequestId,
             external_payment_status: 'completed',
             stripe_payment_record_id: paymentRecord.id,
             stripe_payment_method_id: paymentMethod.id,
@@ -186,6 +194,7 @@ export async function POST(request: NextRequest) {
           status: 'completed',
           hitpay: {
             id: hitpayStatus.id,
+            paymentId: hitpayPaymentId,
             status: hitpayStatus.status,
             amount: hitpayStatus.amount,
             currency: hitpayStatus.currency,
@@ -201,13 +210,17 @@ export async function POST(request: NextRequest) {
         // The customer has paid - we just failed to record it in Stripe
         console.error('[Payment Check] Stripe recording error:', stripeError);
 
+        // Extract payment ID for error response too
+        const hitpayPaymentId = hitpayStatus.payments?.[0]?.id || hitpayPaymentRequestId;
+
         // Update metadata even if payment record creation fails
         // This helps with manual reconciliation
         try {
           await stripe.paymentIntents.update(paymentIntentId, {
             metadata: {
               external_payment_provider: 'hitpay',
-              external_payment_id: hitpayPaymentRequestId,
+              hitpay_payment_id: hitpayPaymentId,
+              hitpay_payment_request_id: hitpayPaymentRequestId,
               external_payment_status: 'completed',
               stripe_recording_error:
                 stripeError instanceof Error
@@ -226,6 +239,7 @@ export async function POST(request: NextRequest) {
           status: 'completed',
           hitpay: {
             id: hitpayStatus.id,
+            paymentId: hitpayPaymentId,
             status: hitpayStatus.status,
             amount: hitpayStatus.amount,
             currency: hitpayStatus.currency,

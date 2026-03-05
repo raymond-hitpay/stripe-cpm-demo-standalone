@@ -9,11 +9,11 @@
  * ------------------------------------------
  * 1. Go to Stripe Dashboard > Settings > Payment Methods
  * 2. Create a new Custom Payment Method Type, copy the ID (cpmt_xxx)
- * 3. Add a new entry to CUSTOM_PAYMENT_METHODS array below
+ * 3. Add a new entry to PAYMENT_METHOD_DEFINITIONS below using ids.<env>
  * 4. Ensure the HitPay payment method is enabled in your HitPay account
  *
  * Each entry defines:
- * - id: The Stripe CPM Type ID (cpmt_xxx) from your Stripe Dashboard
+ * - ids: Per-environment Stripe CPM Type IDs (sandbox/staging/production)
  * - hitpayMethod: The HitPay payment method identifier (see list below)
  * - hitpayRecurringMethod: (Optional) HitPay method for recurring billing if different
  * - displayName: Human-readable name shown in UI and logs
@@ -27,10 +27,15 @@
  * 3. Auto-Charge Subscriptions: Uses CPMs with chargeAutomatically: true
  *    - HitPay tokenizes and charges saved payment method automatically
  *    - Requires HitPay tokenization support (cards, ShopeePay, GrabPay)
+ *
+ * ENVIRONMENT RESOLUTION:
+ * -----------------------
+ * The active environment is read from NEXT_PUBLIC_HITPAY_ENV (sandbox | staging | production).
+ * Entries without an ID for the active environment are automatically excluded.
  */
 
 export interface CustomPaymentMethodConfig {
-  /** Stripe Custom Payment Method Type ID (cpmt_xxx) */
+  /** Stripe Custom Payment Method Type ID (cpmt_xxx) — resolved for the active env */
   id: string;
   /** HitPay payment method identifier for one-time payments */
   hitpayMethod: string;
@@ -42,6 +47,18 @@ export interface CustomPaymentMethodConfig {
   supportsOneTime: boolean;
   /** Whether this method supports auto-charge subscriptions via HitPay tokenization */
   chargeAutomatically: boolean;
+}
+
+type HitPayEnv = 'sandbox' | 'staging' | 'production';
+
+interface EnvIds {
+  sandbox?: string;
+  staging?: string;
+  production?: string;
+}
+
+interface CustomPaymentMethodDefinition extends Omit<CustomPaymentMethodConfig, 'id'> {
+  ids: EnvIds;
 }
 
 // =============================================================================
@@ -100,35 +117,70 @@ export const STRIPE_RECURRING_METHODS: string[] = [
  * @see https://hit-pay.com/docs/api-reference for full list
  * ============================================================================
  */
-export const CUSTOM_PAYMENT_METHODS: CustomPaymentMethodConfig[] = [
+const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
   {
-    id: 'cpmt_1SnWg7H0EH9sk7Na3BI20zou',
+    ids: {
+      sandbox:    'cpmt_1SnWg7H0EH9sk7Na3BI20zou',
+      staging:    'cpmt_1SnWg7H0EH9sk7Na3BI20zou',
+      production: 'cpmt_1T74YBAMHowMCIhZmarAxl5e',
+    },
     hitpayMethod: 'paynow_online',
     displayName: 'PayNow',
     supportsOneTime: true,       // Shop checkout + out-of-band invoices
     chargeAutomatically: false,  // QR-based, no tokenization support
   },
   {
-    id: 'cpmt_1SrU7yH0EH9sk7Nau7jdZbFp',
+    ids: {
+      sandbox:    'cpmt_1SrU7yH0EH9sk7Nau7jdZbFp',
+      staging:    '',
+      production: '',
+    },
     hitpayMethod: 'shopee_pay',
     displayName: 'ShopeePay',
     supportsOneTime: true,       // Shop checkout + out-of-band invoices
     chargeAutomatically: false,  // QR-based, no tokenization support
   },
   {
-    id: 'cpmt_1T4caMH0EH9sk7Na1F8yoeOy',
+    ids: {
+      sandbox:    'cpmt_1T74HqH0EH9sk7NaOPh7nxOr',
+      staging:    'cpmt_1T74HqH0EH9sk7NaOPh7nxOr',
+      production: 'cpmt_1T72UHAMHowMCIhZlcjUE1Fz',
+    },
+    hitpayMethod: 'qrph_netbank',
+    displayName: 'QR Ph',
+    supportsOneTime: true,       // Shop checkout + out-of-band invoices
+    chargeAutomatically: false,  // QR-based, no tokenization support
+  },
+  {
+    ids: {
+      sandbox:    'cpmt_1T74IoH0EH9sk7NadZTkLvi5',
+      staging:    'cpmt_1T74IoH0EH9sk7NadZTkLvi5',
+      production: 'cpmt_1T72ViAMHowMCIhZQmXzU6RK',
+    },
+    hitpayMethod: 'ifpay_qris',
+    displayName: 'QRIS',
+    supportsOneTime: true,       // Shop checkout + out-of-band invoices
+    chargeAutomatically: false,  // QR-based, no tokenization support
+  },
+  {
+    ids: {
+      sandbox:    'cpmt_1T4caMH0EH9sk7Na1F8yoeOy',
+      staging:    '',
+      production: '',
+    },
     hitpayMethod: 'card',
     displayName: 'Cards (by HitPay)',
     supportsOneTime: false,      // Not for one-time payments
     chargeAutomatically: true,   // Supports save & charge via HitPay tokenization
-  }
-
-
-  
+  },
 
   // Add more payment methods here as needed:
   // {
-  //   id: 'cpmt_xxx',
+  //   ids: {
+  //     sandbox:    'cpmt_sandbox_xxx',
+  //     staging:    'cpmt_staging_xxx',
+  //     production: 'cpmt_prod_xxx',
+  //   },
   //   hitpayMethod: 'grabpay',
   //   hitpayRecurringMethod: 'grabpay_direct',
   //   displayName: 'GrabPay',
@@ -136,6 +188,14 @@ export const CUSTOM_PAYMENT_METHODS: CustomPaymentMethodConfig[] = [
   //   chargeAutomatically: true,  // Supports auto-charge subscriptions
   // },
 ];
+
+const activeEnv: HitPayEnv =
+  (process.env.NEXT_PUBLIC_HITPAY_ENV as HitPayEnv) || 'sandbox';
+
+export const CUSTOM_PAYMENT_METHODS: CustomPaymentMethodConfig[] =
+  PAYMENT_METHOD_DEFINITIONS
+    .filter((def) => !!def.ids[activeEnv])
+    .map(({ ids, ...rest }) => ({ ...rest, id: ids[activeEnv]! }));
 
 /**
  * Get all CPM Type IDs for Stripe Elements configuration

@@ -13,13 +13,21 @@
  */
 import Stripe from 'stripe';
 
-// Validate that the secret key is configured at startup
-if (!process.env.STRIPE_SECRET_KEY) {
+const stripeEnv = process.env.NEXT_PUBLIC_HITPAY_ENV || 'sandbox';
+const resolvedSecretKey =
+  stripeEnv === 'production' ? process.env.STRIPE_SECRET_KEY_PRODUCTION
+  : stripeEnv === 'staging'  ? process.env.STRIPE_SECRET_KEY_STAGING
+  : process.env.STRIPE_SECRET_KEY_SANDBOX;
+
+if (!resolvedSecretKey) {
   throw new Error(
-    'STRIPE_SECRET_KEY is not set. Please configure it in your .env.local file.\n' +
+    `STRIPE_SECRET_KEY_${stripeEnv.toUpperCase()} is not set. Please configure it in your .env.local file.\n` +
       'Get your secret key from: https://dashboard.stripe.com/apikeys'
   );
 }
+
+/** Resolved Stripe secret key for the active environment. */
+export const STRIPE_SECRET_KEY = resolvedSecretKey;
 
 /**
  * Stripe client instance configured for Custom Payment Methods.
@@ -28,7 +36,7 @@ if (!process.env.STRIPE_SECRET_KEY) {
  * The @ts-expect-error is needed because this beta version is not
  * recognized by the current @stripe/stripe-js TypeScript definitions.
  */
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+export const stripe = new Stripe(resolvedSecretKey, {
   // The Payment Records API requires this beta API version.
   // The 'clover' tag enables custom payment method features.
   // @ts-expect-error - Beta API version for Payment Records (stripe.paymentRecords.reportPayment)

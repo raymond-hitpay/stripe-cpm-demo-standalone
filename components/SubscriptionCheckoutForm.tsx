@@ -270,6 +270,10 @@ export function SubscriptionCheckoutForm({
           setPaymentStatus('completed');
           clearInterval(pollInterval);
 
+          // Use the actual payment ID from HitPay (transaction ID), fallback to payment request ID
+          const hitpayPaymentId = statusData.paymentId || qrCodeData.paymentRequestId;
+          console.log('[Subscription HitPay] Payment ID:', hitpayPaymentId);
+
           // Mark the invoice as paid
           try {
             const payInvoiceResponse = await fetch('/api/subscription/pay-invoice', {
@@ -277,7 +281,7 @@ export function SubscriptionCheckoutForm({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 invoiceId,
-                hitpayPaymentId: qrCodeData.paymentRequestId,
+                hitpayPaymentId,
                 customPaymentMethodTypeId: selectedPaymentMethodType,
               }),
             });
@@ -296,7 +300,7 @@ export function SubscriptionCheckoutForm({
           const params = new URLSearchParams({
             subscription_id: subscriptionId,
             method: selectedPaymentConfig?.displayName.toLowerCase() || 'custom',
-            hitpay_id: qrCodeData.paymentRequestId,
+            hitpay_id: hitpayPaymentId,
           });
           router.push(`/subscribe/success?${params.toString()}`);
         } else if (statusData.status === 'failed' || statusData.status === 'expired') {

@@ -5,7 +5,7 @@
  * This endpoint can be used for demo/testing purposes.
  *
  * For production, use the Stripe webhook at /api/stripe/webhook which listens for
- * `invoice.payment_action_required` events and automatically charges via HitPay.
+ * `invoice.payment_attempt_required` events and automatically charges via HitPay.
  *
  * Flow:
  * 1. Get invoice from Stripe
@@ -35,10 +35,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { chargeRecurringBilling } from '@/lib/hitpay';
-import { stripe as stripeClover } from '@/lib/stripe';
+import { stripe as stripeClover, STRIPE_SECRET_KEY } from '@/lib/stripe';
 
 // Standard Stripe client for invoice/subscription operations
-const stripeStandard = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+const stripeStandard = new Stripe(STRIPE_SECRET_KEY, {
   apiVersion: '2025-12-15.clover' as Stripe.LatestApiVersion,
   typescript: true,
 });

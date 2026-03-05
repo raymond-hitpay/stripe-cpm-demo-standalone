@@ -38,10 +38,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { STRIPE_RECURRING_METHODS } from '@/config/payment-methods';
+import { STRIPE_SECRET_KEY } from '@/lib/stripe';
 
 // Use standard Stripe client for subscriptions
 // Note: Using a compatible API version for subscriptions
-const stripeSubscriptions = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+const stripeSubscriptions = new Stripe(STRIPE_SECRET_KEY, {
   apiVersion: '2025-12-15.clover' as Stripe.LatestApiVersion,
   typescript: true,
 });
