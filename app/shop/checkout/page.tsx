@@ -241,8 +241,8 @@ export default function CheckoutPage() {
         },
         // Configure one-time Custom Payment Methods to show in Payment Element
         customPaymentMethods: buildCustomPaymentMethodsConfig(),
-        // Show custom payment methods first, then card
-        paymentMethodOrder: [...oneTimeCpmTypeIds, 'card'],
+        // Show card first, then custom payment methods
+        paymentMethodOrder: ['card', ...oneTimeCpmTypeIds],
       }
     : null;
 

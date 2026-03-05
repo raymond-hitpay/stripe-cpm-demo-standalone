@@ -325,8 +325,8 @@ function SubscribeContent() {
         },
         // Configure one-time Custom Payment Methods for out-of-band billing
         customPaymentMethods: buildSubscriptionCpmConfig(),
-        // Show custom payment methods first, then card
-        paymentMethodOrder: [...oneTimeCpmTypeIds, 'card'],
+        // Show card first, then custom payment methods
+        paymentMethodOrder: ['card', ...oneTimeCpmTypeIds],
       }
     : null;
 
