@@ -206,17 +206,17 @@ const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
     supportsOneTime: true,       // Shop checkout + out-of-band invoices
     chargeAutomatically: false,  // QR-based, no tokenization support
   },
-  {
-    ids: {
-      sandbox:    'cpmt_1T7SXSH0EH9sk7NaUKV9Ngsw',
-      staging:    'cpmt_1T7SXSH0EH9sk7NaUKV9Ngsw',
-      production: 'cpmt_1T7SYhAMHowMCIhZr6WfpM6E',
-    },
-    hitpayMethod: 'grabpay',
-    displayName: 'GrabPay',
-    supportsOneTime: true,       // Shop checkout + out-of-band invoices
-    chargeAutomatically: false,  // QR-based, no tokenization support
-  },
+  // {
+  //   ids: {
+  //     sandbox:    'cpmt_1T7SyiH0EH9sk7Naa0KmlUNX',
+  //     staging:    'cpmt_1T7SyiH0EH9sk7Naa0KmlUNX',
+  //     production: 'cpmt_1T7SYhAMHowMCIhZr6WfpM6E',
+  //   },
+  //   hitpayMethod: 'grabpay',
+  //   displayName: 'GrabPay',
+  //   supportsOneTime: false,       // Shop checkout + out-of-band invoices
+  //   chargeAutomatically: true,  // QR-based, no tokenization support
+  // },
 
   // {
   //   ids: {
