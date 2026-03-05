@@ -157,7 +157,7 @@ const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
       staging:    'cpmt_1T7Sk5H0EH9sk7Naz1EnUWj1',
       production: 'cpmt_1T7SjcAMHowMCIhZDTzEpdKW',
     },
-    hitpayMethod: 'gcash_qr',
+    hitpayMethod: 'paynow_online',
     displayName: 'GCash',
     supportsOneTime: true,      // Not for one-time payments
     chargeAutomatically: false,   // Supports save & charge via HitPay tokenization
