@@ -212,7 +212,7 @@ const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
       staging:    'cpmt_1T7SyiH0EH9sk7Naa0KmlUNX',
       production: 'cpmt_1T7SYhAMHowMCIhZr6WfpM6E',
     },
-    hitpayMethod: 'grabpay',
+    hitpayMethod: 'grabpay_direct',
     displayName: 'GrabPay',
     supportsOneTime: false,       // Shop checkout + out-of-band invoices
     chargeAutomatically: true,  // QR-based, no tokenization support
