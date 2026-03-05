@@ -118,25 +118,36 @@ export const STRIPE_RECURRING_METHODS: string[] = [
  * ============================================================================
  */
 const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
+  // {
+  //   ids: {
+  //     sandbox:    'cpmt_1SnWg7H0EH9sk7Na3BI20zou',
+  //     staging:    'cpmt_1SnWg7H0EH9sk7Na3BI20zou',
+  //     production: 'cpmt_1T74YBAMHowMCIhZmarAxl5e',
+  //   },
+  //   hitpayMethod: 'paynow_online',
+  //   displayName: 'PayNow',
+  //   supportsOneTime: true,       // Shop checkout + out-of-band invoices
+  //   chargeAutomatically: false,  // QR-based, no tokenization support
+  // },
   {
     ids: {
-      sandbox:    'cpmt_1SnWg7H0EH9sk7Na3BI20zou',
-      staging:    'cpmt_1SnWg7H0EH9sk7Na3BI20zou',
-      production: 'cpmt_1T74YBAMHowMCIhZmarAxl5e',
+      sandbox:    'cpmt_1T4caMH0EH9sk7Na1F8yoeOy',
+      staging:    '',
+      production: '',
     },
-    hitpayMethod: 'paynow_online',
-    displayName: 'PayNow',
-    supportsOneTime: true,       // Shop checkout + out-of-band invoices
-    chargeAutomatically: false,  // QR-based, no tokenization support
+    hitpayMethod: 'shopee_pay',
+    displayName: 'ShopeePay',
+    supportsOneTime: true,      // Not for one-time payments
+    chargeAutomatically: true,   // Supports save & charge via HitPay tokenization
   },
   {
     ids: {
-      sandbox:    '',
-      staging:    '',
-      production: 'cpmt_1T72baAMHowMCIhZQz0vBaH0',
+      sandbox:    'cpmt_1T7SbgH0EH9sk7NaK7rrZlWw',
+      staging:    'cpmt_1T7SbgH0EH9sk7NaK7rrZlWw',
+      production: 'cpmt_1T7SbuAMHowMCIhZ67WNWUfF',
     },
-    hitpayMethod: 'zalopay',
-    displayName: 'ZaloPay',
+    hitpayMethod: 'atome_qr',
+    displayName: 'Atome',
     supportsOneTime: true,       // Shop checkout + out-of-band invoices
     chargeAutomatically: false,  // QR-based, no tokenization support
   },
@@ -164,15 +175,38 @@ const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
   },
   {
     ids: {
-      sandbox:    'cpmt_1T4caMH0EH9sk7Na1F8yoeOy',
-      staging:    '',
-      production: '',
+      sandbox:    'cpmt_1T7SVpH0EH9sk7NaXCBpoNPf',
+      staging:    'cpmt_1T7SVpH0EH9sk7NaXCBpoNPf',
+      production: 'cpmt_1T72baAMHowMCIhZQz0vBaH0',
     },
-    hitpayMethod: 'card',
-    displayName: 'Cards (by HitPay)',
-    supportsOneTime: false,      // Not for one-time payments
-    chargeAutomatically: true,   // Supports save & charge via HitPay tokenization
+    hitpayMethod: 'zalopay',
+    displayName: 'ZaloPay',
+    supportsOneTime: true,       // Shop checkout + out-of-band invoices
+    chargeAutomatically: false,  // QR-based, no tokenization support
   },
+  {
+    ids: {
+      sandbox:    'cpmt_1T7SXSH0EH9sk7NaUKV9Ngsw',
+      staging:    'cpmt_1T7SXSH0EH9sk7NaUKV9Ngsw',
+      production: 'cpmt_1T7SYhAMHowMCIhZr6WfpM6E',
+    },
+    hitpayMethod: 'duitnow',
+    displayName: 'DuitNow',
+    supportsOneTime: true,       // Shop checkout + out-of-band invoices
+    chargeAutomatically: false,  // QR-based, no tokenization support
+  },
+
+  // {
+  //   ids: {
+  //     sandbox:    'cpmt_1T4caMH0EH9sk7Na1F8yoeOy',
+  //     staging:    '',
+  //     production: '',
+  //   },
+  //   hitpayMethod: 'card',
+  //   displayName: 'Cards (by HitPay)',
+  //   supportsOneTime: false,      // Not for one-time payments
+  //   chargeAutomatically: true,   // Supports save & charge via HitPay tokenization
+  // },
 
   // Add more payment methods here as needed:
   // {
