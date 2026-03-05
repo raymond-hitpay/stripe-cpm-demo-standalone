@@ -36,16 +36,9 @@
  * ```
  */
 import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
 import { createRecurringBilling } from '@/lib/hitpay';
 import { getPaymentMethodConfig } from '@/config/payment-methods';
-import { STRIPE_SECRET_KEY } from '@/lib/stripe';
-
-// Standard Stripe client for customer updates
-const stripe = new Stripe(STRIPE_SECRET_KEY, {
-  apiVersion: '2025-12-15.clover' as Stripe.LatestApiVersion,
-  typescript: true,
-});
+import { stripe } from '@/lib/stripe';
 
 export async function POST(request: NextRequest) {
   try {

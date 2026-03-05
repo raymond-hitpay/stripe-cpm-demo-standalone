@@ -103,30 +103,48 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ### Environment Variables
 
+Keys are scoped per environment (`sandbox`, `staging`, `production`). The active environment is selected by `NEXT_PUBLIC_HITPAY_ENV`.
+
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Yes | Stripe publishable key (pk_test_xxx) |
-| `STRIPE_SECRET_KEY` | Yes | Stripe secret key (sk_test_xxx) |
-| `NEXT_PUBLIC_CPM_TYPE_ID` | Yes | Custom Payment Method Type ID (cpmt_xxx) |
-| `HITPAY_API_KEY` | Yes | HitPay API key |
-| `HITPAY_SALT` | For webhooks | HitPay webhook signature salt |
-| `NEXT_PUBLIC_HITPAY_ENV` | No | `sandbox` (default) or `production` |
+| `NEXT_PUBLIC_HITPAY_ENV` | No | `sandbox` (default), `staging`, or `production` |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_SANDBOX` | Yes | Stripe publishable key for sandbox |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_STAGING` | For staging | Stripe publishable key for staging |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_PRODUCTION` | For production | Stripe publishable key for production |
+| `STRIPE_SECRET_KEY_SANDBOX` | Yes | Stripe secret key for sandbox |
+| `STRIPE_SECRET_KEY_STAGING` | For staging | Stripe secret key for staging |
+| `STRIPE_SECRET_KEY_PRODUCTION` | For production | Stripe secret key for production |
+| `HITPAY_API_KEY_SANDBOX` | Yes | HitPay API key for sandbox |
+| `HITPAY_API_KEY_STAGING` | For staging | HitPay API key for staging |
+| `HITPAY_API_KEY_PRODUCTION` | For production | HitPay API key for production |
+| `HITPAY_SALT_SANDBOX` | For webhooks | HitPay webhook salt for sandbox |
+| `HITPAY_SALT_STAGING` | For webhooks | HitPay webhook salt for staging |
+| `HITPAY_SALT_PRODUCTION` | For webhooks | HitPay webhook salt for production |
+| `STRIPE_WEBHOOK_SECRET` | For auto-charge | Stripe webhook signing secret |
 | `NEXT_PUBLIC_SITE_URL` | For webhooks | Your public URL for webhook callbacks |
+
+**Note:** CPM Type IDs are configured in `/config/payment-methods.ts`, not via environment variables.
 
 ### Example `.env.local`
 
 ```bash
-# Stripe
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_51ABC...
-STRIPE_SECRET_KEY=sk_test_51ABC...
-NEXT_PUBLIC_CPM_TYPE_ID=cpmt_1ABC...
-
-# HitPay
-HITPAY_API_KEY=your-api-key-here
-HITPAY_SALT=your-webhook-salt-here
+# Active environment: sandbox | staging | production
 NEXT_PUBLIC_HITPAY_ENV=sandbox
 
-# For webhooks (production)
+# Stripe Keys (per environment)
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_SANDBOX=pk_test_51ABC...
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_PRODUCTION=pk_live_51ABC...
+STRIPE_SECRET_KEY_SANDBOX=sk_test_51ABC...
+STRIPE_SECRET_KEY_PRODUCTION=sk_live_51ABC...
+
+# HitPay Keys (per environment)
+HITPAY_API_KEY_SANDBOX=your-sandbox-api-key
+HITPAY_API_KEY_PRODUCTION=your-production-api-key
+HITPAY_SALT_SANDBOX=your-sandbox-salt
+HITPAY_SALT_PRODUCTION=your-production-salt
+
+# Webhook configuration (for production)
+STRIPE_WEBHOOK_SECRET=whsec_xxx
 NEXT_PUBLIC_SITE_URL=https://your-domain.com
 ```
 
@@ -282,7 +300,7 @@ HitPay sends webhooks when payment status changes. The endpoint:
 
 ### PayNow option not appearing
 
-1. **Check CPM_TYPE_ID**: Ensure `NEXT_PUBLIC_CPM_TYPE_ID` matches your Stripe Dashboard
+1. **Check CPM Type ID**: Ensure the `id` in `/config/payment-methods.ts` matches your Stripe Dashboard
 2. **Enable the CPM Type**: Go to Stripe Dashboard → Payment Methods → Enable your custom type
 3. **Check Console**: Look for warnings about missing configuration
 4. **Beta Flag**: Ensure Stripe.js is loaded with `custom_payment_methods_beta_1`

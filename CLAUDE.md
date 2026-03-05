@@ -140,19 +140,36 @@ This project is the **standalone version** where:
 
 ## Environment Variables
 
+Keys are scoped per environment. `NEXT_PUBLIC_HITPAY_ENV` selects the active set (`sandbox` | `staging` | `production`).
+
 ```bash
-# Stripe (Standard Account)
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_xxx
-STRIPE_SECRET_KEY=sk_test_xxx
+# Active environment
+NEXT_PUBLIC_HITPAY_ENV=sandbox
+
+# Stripe Keys (per environment)
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_SANDBOX=pk_test_xxx
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_STAGING=pk_test_xxx
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_PRODUCTION=pk_live_xxx
+
+STRIPE_SECRET_KEY_SANDBOX=sk_test_xxx
+STRIPE_SECRET_KEY_STAGING=sk_test_xxx
+STRIPE_SECRET_KEY_PRODUCTION=sk_live_xxx
+
+# HitPay Keys (per environment)
+HITPAY_API_KEY_SANDBOX=xxx
+HITPAY_API_KEY_STAGING=xxx
+HITPAY_API_KEY_PRODUCTION=xxx
+
+HITPAY_SALT_SANDBOX=xxx
+HITPAY_SALT_STAGING=xxx
+HITPAY_SALT_PRODUCTION=xxx
 
 # Stripe Webhook Secret (for auto-charge subscription renewals)
 # Get from Stripe Dashboard > Developers > Webhooks > Your endpoint > Signing secret
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 
-# HitPay
-HITPAY_API_KEY=xxx
-HITPAY_SALT=xxx
-NEXT_PUBLIC_HITPAY_ENV=sandbox
+# For webhook callbacks
+NEXT_PUBLIC_SITE_URL=https://yoursite.com
 ```
 
 **Note:** CPM Type IDs are configured in `/config/payment-methods.ts`, not via environment variables.
