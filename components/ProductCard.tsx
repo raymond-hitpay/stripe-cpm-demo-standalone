@@ -19,9 +19,10 @@ export function ProductCard({ product }: ProductCardProps) {
     }).format(price / 100);
   };
 
-  const getIntervalLabel = (interval?: 'month' | 'year') => {
+  const getIntervalLabel = (interval?: 'day' | 'week' | 'month' | 'year') => {
     if (!interval) return '';
-    return interval === 'month' ? '/mo' : '/yr';
+    const labels: Record<string, string> = { day: '/day', week: '/wk', month: '/mo', year: '/yr' };
+    return labels[interval] ?? `/${interval}`;
   };
 
   return (

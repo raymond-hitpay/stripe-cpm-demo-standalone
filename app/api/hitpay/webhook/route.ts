@@ -1,17 +1,15 @@
 /**
  * POST /api/hitpay/webhook
  *
- * Webhook handler for HitPay payment notifications.
+ * Webhook handler for HitPay payment notifications. Handles two event types:
  *
- * This endpoint receives webhook callbacks from HitPay when payment status changes.
- * It serves as a backup to polling - ensuring payments are recorded in Stripe even
- * if the user closes their browser before polling detects completion.
+ * 1. One-time payment webhooks (form-urlencoded, no "event" field):
+ *    Fired when a payment request status changes. Used as a backup to polling.
  *
- * Webhook Flow:
- * 1. HitPay sends POST request when payment status changes
- * 2. We verify the HMAC-SHA256 signature using HITPAY_SALT
- * 3. If payment completed, we record it in Stripe via Payment Records API
- * 4. Return 200 OK to acknowledge receipt (prevents HitPay retries)
+ * 2. recurring_billing.method_attached (JSON, "event" field present):
+ *    Fired when a customer authorizes their payment method for auto-charge.
+ *    This is the primary trigger for charging the first subscription invoice —
+ *    more reliable than the browser redirect to /subscribe/setup.
  *
  * Setup Instructions:
  * 1. Deploy your app to get a public URL
@@ -19,23 +17,11 @@
  * 3. Copy the webhook salt and set it as HITPAY_SALT in your environment
  *
  * @see https://hit-pay.com/docs/api#webhooks
- *
- * @example Webhook Payload (form-urlencoded or JSON)
- * ```json
- * {
- *   "payment_id": "abc123",
- *   "payment_request_id": "def456",
- *   "reference_number": "pi_xxx",   // Your PaymentIntent ID
- *   "amount": "10.00",
- *   "currency": "sgd",
- *   "status": "completed",
- *   "hmac": "sha256_signature_here"
- * }
- * ```
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyHitPayWebhook, getHitPayPaymentStatus } from '@/lib/hitpay';
+import { verifyHitPayWebhook, verifyHitPayJsonWebhook, getHitPayPaymentStatus } from '@/lib/hitpay';
 import { stripe } from '@/lib/stripe';
+import { chargeInvoiceInternal } from '@/app/api/subscription/charge-invoice/route';
 
 // Disable caching for webhooks
 export const dynamic = 'force-dynamic';
@@ -61,16 +47,82 @@ export async function POST(request: NextRequest) {
     // Parse the webhook payload
     // HitPay may send form-urlencoded or JSON depending on configuration
     const contentType = request.headers.get('content-type') || '';
-    let payload: HitPayWebhookPayload;
+    let rawPayload: Record<string, unknown>;
 
     if (contentType.includes('application/x-www-form-urlencoded')) {
       const formData = await request.formData();
-      payload = Object.fromEntries(
-        formData.entries()
-      ) as unknown as HitPayWebhookPayload;
+      rawPayload = Object.fromEntries(formData.entries()) as Record<string, unknown>;
     } else {
-      payload = await request.json();
+      rawPayload = await request.json();
     }
+
+    // -------------------------------------------------------------------------
+    // Handle recurring billing events (JSON with top-level "event" field)
+    // -------------------------------------------------------------------------
+    if (typeof rawPayload.event === 'string') {
+      const event = rawPayload.event;
+      console.log(`[HitPay Webhook] Received event: ${event}`);
+
+      const hmac = typeof rawPayload.hmac === 'string' ? rawPayload.hmac : null;
+      if (!hmac) {
+        console.warn('[HitPay Webhook] No hmac field — proceeding without signature verification');
+      } else {
+        if (!verifyHitPayJsonWebhook(rawPayload, hmac)) {
+          console.error('[HitPay Webhook] Invalid HMAC signature for event webhook');
+          return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+        }
+      }
+
+      if (event === 'recurring_billing.method_attached') {
+        const recurringBilling = rawPayload.recurring_billing as Record<string, unknown> | undefined;
+        if (!recurringBilling) {
+          console.error('[HitPay Webhook] Missing recurring_billing in payload');
+          return NextResponse.json({ error: 'Missing recurring_billing' }, { status: 400 });
+        }
+
+        const redirectUrl = recurringBilling.redirect_url as string | undefined;
+        if (!redirectUrl) {
+          console.error('[HitPay Webhook] No redirect_url in recurring_billing payload');
+          return NextResponse.json({ error: 'Missing redirect_url' }, { status: 400 });
+        }
+
+        let invoiceId: string | null = null;
+        try {
+          invoiceId = new URL(redirectUrl).searchParams.get('invoice_id');
+        } catch {
+          console.error('[HitPay Webhook] Failed to parse redirect_url:', redirectUrl);
+          return NextResponse.json({ error: 'Invalid redirect_url' }, { status: 400 });
+        }
+
+        if (!invoiceId) {
+          console.error('[HitPay Webhook] No invoice_id in redirect_url:', redirectUrl);
+          return NextResponse.json({ error: 'Missing invoice_id in redirect_url' }, { status: 400 });
+        }
+
+        console.log(`[HitPay Webhook] Charging invoice: ${invoiceId}`);
+        const result = await chargeInvoiceInternal(invoiceId, 'webhook');
+
+        if (result.skipped) {
+          console.log(`[HitPay Webhook] Invoice already paid — skipped: ${invoiceId}`);
+        } else if (!result.success) {
+          console.error(`[HitPay Webhook] Failed to charge invoice ${invoiceId}: ${result.error}`);
+          // Return 200 to prevent HitPay from retrying indefinitely for non-retryable errors
+          return NextResponse.json({ received: true, warning: result.error });
+        } else {
+          console.log(`[HitPay Webhook] Invoice charged: ${invoiceId}, hitpay_payment_id=${result.hitpayPaymentId}`);
+        }
+
+        return NextResponse.json({ received: true });
+      }
+
+      // Unhandled event type — acknowledge and move on
+      return NextResponse.json({ received: true });
+    }
+
+    // -------------------------------------------------------------------------
+    // Handle one-time payment webhooks (flat payload, no "event" field)
+    // -------------------------------------------------------------------------
+    const payload = rawPayload as unknown as HitPayWebhookPayload;
 
     console.log('[HitPay Webhook] Received:', {
       payment_request_id: payload.payment_request_id,

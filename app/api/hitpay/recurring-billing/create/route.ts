@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
       customerName,
       paymentMethod,
       cpmTypeId,
+      originUrl,
     } = body as {
       customerId: string;
       subscriptionId: string;
@@ -63,6 +64,7 @@ export async function POST(request: NextRequest) {
       customerName?: string;
       paymentMethod: string; // e.g., 'shopee_recurring', 'grabpay_direct', 'card'
       cpmTypeId?: string; // Stripe CPM Type ID for recording payments
+      originUrl?: string; // Original page URL to return to after setup
     };
 
     // Validation
@@ -96,6 +98,10 @@ export async function POST(request: NextRequest) {
     redirectUrl.searchParams.set('customer_id', customerId);
     redirectUrl.searchParams.set('invoice_id', invoiceId || '');
 
+    // Webhook URL — receives recurring_billing.method_attached to charge the
+    // first invoice server-side (more reliable than waiting for the redirect)
+    const webhookUrl = new URL('/api/hitpay/webhook', baseUrl);
+
     console.log(`[HitPay Recurring] Creating session for ${customerEmail}, method: ${paymentMethod}`);
 
     // Create HitPay recurring billing session
@@ -107,6 +113,7 @@ export async function POST(request: NextRequest) {
       currency: currency.toUpperCase(),
       save_payment_method: true,
       payment_methods: [paymentMethod],
+      webhook: webhookUrl.toString(),
       redirect_url: redirectUrl.toString(),
       reference: subscriptionId,
     });
@@ -122,6 +129,7 @@ export async function POST(request: NextRequest) {
         hitpay_payment_method: paymentMethod,
         hitpay_setup_subscription_id: subscriptionId,
         hitpay_setup_at: new Date().toISOString(),
+        hitpay_origin_url: originUrl || '',
       },
     });
 

@@ -53,6 +53,7 @@ export interface ChargeInvoiceResult {
   currency?: string;
   paymentRecordId?: string | null;
   paymentMethodId?: string | null;
+  originUrl?: string | null;
   message: string;
   error?: string;
   skipped?: boolean;
@@ -143,6 +144,7 @@ export async function chargeInvoiceInternal(
 
   const recurringBillingId = customer.metadata?.hitpay_recurring_billing_id;
   const cpmTypeId = customer.metadata?.hitpay_cpm_type_id;
+  const originUrl = customer.metadata?.hitpay_origin_url || null;
 
   if (!recurringBillingId) {
     console.log(`${logPrefix} No recurring billing ID on customer: ${customer.id}`);
@@ -198,6 +200,7 @@ export async function chargeInvoiceInternal(
   // Step 5: Record payment in Stripe via Payment Records API
   let paymentRecordId: string | null = null;
   let paymentMethodId: string | null = null;
+  let invoiceMarkedAsPaid = false;
 
   if (cpmTypeId) {
     try {
@@ -260,16 +263,23 @@ export async function chargeInvoiceInternal(
         payment_record: paymentRecord.id,
       });
       console.log(`${logPrefix} Attached Payment Record to invoice: ${invoiceId}`);
+      invoiceMarkedAsPaid = true;
     } catch (recordError) {
-      // Log but continue - payment was still processed
-      console.error(`${logPrefix} Payment record error (continuing):`, recordError);
+      // Log but continue - will use fallback to mark invoice as paid
+      console.error(`${logPrefix} Payment record error (will use fallback):`, recordError);
     }
   }
 
-  // Step 6: For auto-charge subscriptions, the Payment Record is sufficient
-  // DO NOT call invoices.pay({ paid_out_of_band: true }) - that creates a duplicate payment record
-  // The Payment Records API handles payment tracking for auto-charge subscriptions
-  // (paid_out_of_band is only for "Pay Each Invoice" subscriptions in /api/subscription/pay-invoice)
+  // Fallback: if invoice wasn't marked as paid via attachPayment (e.g. missing cpmTypeId or
+  // attachPayment threw), mark it paid_out_of_band so the subscription always activates
+  if (!invoiceMarkedAsPaid) {
+    try {
+      await stripe.invoices.pay(invoiceId, { paid_out_of_band: true });
+      console.log(`${logPrefix} Marked invoice as paid (fallback): ${invoiceId}`);
+    } catch (fallbackError) {
+      console.error(`${logPrefix} Fallback invoice pay error:`, fallbackError);
+    }
+  }
 
   console.log(`${logPrefix} Payment recorded via Payment Records API`);
 
@@ -306,6 +316,7 @@ export async function chargeInvoiceInternal(
     currency,
     paymentRecordId,
     paymentMethodId,
+    originUrl,
     message: 'Invoice charged and payment recorded successfully',
   };
 }

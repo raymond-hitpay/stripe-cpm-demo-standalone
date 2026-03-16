@@ -15,7 +15,7 @@ export interface Product {
   // Subscription fields
   type?: 'one_time' | 'subscription';
   stripePriceId?: string;       // Stripe Price ID for subscriptions
-  interval?: 'month' | 'year';  // Billing interval
+  interval?: 'day' | 'week' | 'month' | 'year';  // Billing interval
   intervalCount?: number;       // e.g., 1 for monthly
 }
 

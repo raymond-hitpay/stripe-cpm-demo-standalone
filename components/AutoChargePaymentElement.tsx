@@ -63,6 +63,7 @@ export function AutoChargePaymentElement({
   const [selectedPaymentMethodType, setSelectedPaymentMethodType] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [newTabOpened, setNewTabOpened] = useState(false);
 
   // Ref to prevent duplicate submissions
   const hasInitiatedRedirect = useRef(false);
@@ -86,6 +87,9 @@ export function AutoChargePaymentElement({
 
     console.log(`[AutoCharge] Initiating HitPay redirect for ${cpmConfig?.displayName} (${recurringMethod})`);
 
+    // Open blank tab synchronously (before await) to avoid popup blocker
+    const newTab = window.open('', '_blank');
+
     const response = await fetch('/api/hitpay/recurring-billing/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -99,19 +103,25 @@ export function AutoChargePaymentElement({
         customerName,
         paymentMethod: recurringMethod,
         cpmTypeId,
+        originUrl: window.location.href,
       }),
     });
 
     const data = await response.json();
 
     if (data.error) {
+      newTab?.close();
       throw new Error(data.error + (data.details ? `: ${data.details}` : ''));
     }
 
-    if (data.redirectUrl) {
-      console.log('[AutoCharge] Redirecting to HitPay:', data.redirectUrl);
-      window.location.href = data.redirectUrl;
+    if (data.redirectUrl && newTab) {
+      console.log('[AutoCharge] Opening HitPay in new tab:', data.redirectUrl);
+      newTab.location.href = data.redirectUrl;
+      setIsProcessing(false);
+      setNewTabOpened(true);
+      hasInitiatedRedirect.current = false;
     } else {
+      newTab?.close();
       throw new Error('No redirect URL received from HitPay');
     }
   };
@@ -167,6 +177,7 @@ export function AutoChargePaymentElement({
     console.log(`[AutoCharge] Payment method selected: ${paymentMethodType}`);
     setSelectedPaymentMethodType(paymentMethodType);
     setError(null);
+    setNewTabOpened(false);
   };
 
   /**
@@ -267,6 +278,18 @@ export function AutoChargePaymentElement({
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <p className="text-red-600 text-sm">{error}</p>
+        </div>
+      )}
+
+      {/* New tab info banner */}
+      {newTabOpened && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <p className="text-blue-700 text-sm font-medium">
+            HitPay authorization opened in a new tab.
+          </p>
+          <p className="text-blue-600 text-sm mt-1">
+            Complete the authorization there to finish setting up auto-charge.
+          </p>
         </div>
       )}
 

@@ -65,6 +65,14 @@ function SetupContent() {
         console.log('[Setup] Processing HitPay redirect for subscription:', subscriptionId);
         console.log('[Setup] HitPay reference:', reference, 'status:', status);
 
+        // Check HitPay redirect status
+        // HitPay sets status=active when payment method was successfully saved
+        if (status && status !== 'active') {
+          throw new Error(
+            'Payment authorization was not completed. Please try again.'
+          );
+        }
+
         // Step 1: Get the HitPay recurring billing session
         // The reference should be the subscription ID we passed
         // For now, we'll look up the customer's metadata to find the recurring billing ID
@@ -91,12 +99,17 @@ function SetupContent() {
           throw new Error(chargeData.error || chargeData.details || 'Failed to charge first invoice');
         }
 
-        console.log('[Setup] First invoice charged:', chargeData);
+        if (chargeData.skipped) {
+          // Invoice was already paid by the server-side webhook before this redirect arrived
+          console.log('[Setup] Invoice already paid — skipping charge (webhook handled it)');
+        } else {
+          console.log('[Setup] First invoice charged:', chargeData);
+        }
 
         setChargeResult({
-          paymentId: chargeData.hitpayPaymentId,
-          amount: chargeData.amount,
-          currency: chargeData.currency,
+          paymentId: chargeData.hitpayPaymentId || '',
+          amount: chargeData.amount || 0,
+          currency: chargeData.currency || 'SGD',
         });
 
         setStep('success');
