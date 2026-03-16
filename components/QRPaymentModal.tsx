@@ -208,7 +208,7 @@ export function QRPaymentModal({
               </div>
 
               {/* Testing Link */}
-              {qrCodeData.qrCode && (
+              {process.env.NEXT_PUBLIC_HITPAY_ENV !== 'production' && qrCodeData.qrCode && (
                 <a
                   href={qrCodeData.qrCode}
                   target="_blank"

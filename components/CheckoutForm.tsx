@@ -432,8 +432,8 @@ export function CheckoutForm({
         options={
           {
             layout: 'tabs',
-            // Show custom payment methods first, then card
-            paymentMethodOrder: [...getAllCpmTypeIds(), 'card'],
+            // Show standard payment methods first, then custom payment methods
+            paymentMethodOrder: ['card', 'google_pay', 'apple_pay', 'link', ...getAllCpmTypeIds()],
           } as any // Type assertion needed for beta API
         }
         onChange={handlePaymentElementChange}

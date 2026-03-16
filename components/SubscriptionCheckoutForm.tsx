@@ -448,7 +448,7 @@ export function SubscriptionCheckoutForm({
         options={
           {
             layout: 'tabs',
-            paymentMethodOrder: [...getAllCpmTypeIds(), 'card'],
+            paymentMethodOrder: ['card', 'google_pay', 'apple_pay', 'link', ...getAllCpmTypeIds()],
           } as any
         }
         onChange={handlePaymentElementChange}

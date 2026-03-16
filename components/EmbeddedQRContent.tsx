@@ -145,7 +145,7 @@ export function EmbeddedQRContent({
         </div>
 
         {/* Link to HitPay checkout for testing */}
-        {qrCodeData.qrCode && (
+        {process.env.NEXT_PUBLIC_HITPAY_ENV !== 'production' && qrCodeData.qrCode && (
           <a
             href={qrCodeData.qrCode}
             target="_blank"

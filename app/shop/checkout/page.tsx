@@ -287,18 +287,6 @@ export default function CheckoutPage() {
             </div>
           </div>
 
-          {/* Demo Info */}
-          <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h3 className="font-medium text-gray-900 text-sm">
-              Standalone Integration
-            </h3>
-            <ul className="mt-2 text-xs text-gray-600 space-y-1">
-              <li>- PaymentIntent created on your Stripe account</li>
-              <li>- Custom Payment Method Type configured on your account</li>
-              <li>- HitPay QR embedded in Payment Element</li>
-              <li>- Payment Record created on your account</li>
-            </ul>
-          </div>
         </div>
 
         {/* Payment Section */}
