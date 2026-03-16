@@ -1,149 +1,132 @@
+'use client';
+
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { ProductCard } from '@/components/ProductCard';
+import { CartIcon } from '@/components/CartIcon';
+import { products } from '@/lib/store';
+import { Product } from '@/lib/store';
 
-export default function LandingPage() {
+type Tab = 'one_time' | 'subscriptions';
+
+export default function HomePage() {
+  const [activeTab, setActiveTab] = useState<Tab>('one_time');
+  const [subProducts, setSubProducts] = useState<Product[]>([]);
+  const [subLoading, setSubLoading] = useState(false);
+  const [subLoaded, setSubLoaded] = useState(false);
+
+  useEffect(() => {
+    if (activeTab === 'subscriptions' && !subLoaded) {
+      setSubLoading(true);
+      fetch('/api/products?type=recurring')
+        .then((res) => res.json())
+        .then((data) => {
+          setSubProducts(data.products ?? []);
+          setSubLoaded(true);
+        })
+        .catch(() => setSubProducts([]))
+        .finally(() => setSubLoading(false));
+    }
+  }, [activeTab, subLoaded]);
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center">
-      {/* Header */}
-      <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900">
-          Stripe CPM Demo
-        </h1>
-        <p className="mt-3 text-lg text-gray-600">
-          Choose your payment experience
-        </p>
-      </div>
-
-      {/* Flow Selection Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl w-full px-4">
-        {/* One-Time Payments Card */}
-        <Link
-          href="/shop"
-          className="group bg-white rounded-xl shadow-lg border-2 border-transparent hover:border-indigo-500 transition-all p-8 flex flex-col"
-        >
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center group-hover:bg-indigo-200 transition-colors">
-              <svg
-                className="w-6 h-6 text-indigo-600"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
-                />
-              </svg>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900">One-Time Payments</h2>
+    <div className="min-h-screen bg-gray-50">
+      {/* Top bar */}
+      <header className="bg-white border-b border-gray-200">
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">Stripe CPM Demo</h1>
+            <p className="text-xs text-gray-500 hidden sm:block">Custom Payment Methods · HitPay Integration</p>
           </div>
-
-          <p className="text-gray-600 mb-6 flex-grow">
-            Browse products, add to cart, and checkout with card or PayNow via
-            Stripe Custom Payment Methods.
-          </p>
-
-          <ul className="text-sm text-gray-500 space-y-2 mb-6">
-            <li className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+          <div className="flex items-center gap-3">
+            <CartIcon />
+            <Link
+              href="/portal"
+              title="Customer Portal"
+              className="p-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
-              Shopping cart experience
-            </li>
-            <li className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-              Card + PayNow (CPM) support
-            </li>
-            <li className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-              QR code payment flow
-            </li>
-          </ul>
-
-          <div className="flex items-center text-indigo-600 font-medium group-hover:text-indigo-700">
-            Browse Products
-            <svg className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-            </svg>
+            </Link>
           </div>
-        </Link>
-
-        {/* Subscriptions Card */}
-        <Link
-          href="/subscriptions"
-          className="group bg-white rounded-xl shadow-lg border-2 border-transparent hover:border-purple-500 transition-all p-8 flex flex-col"
-        >
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center group-hover:bg-purple-200 transition-colors">
-              <svg
-                className="w-6 h-6 text-purple-600"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900">Subscriptions</h2>
-          </div>
-
-          <p className="text-gray-600 mb-6 flex-grow">
-            Subscribe to recurring plans with automatic billing powered by
-            Stripe Billing.
-          </p>
-
-          <ul className="text-sm text-gray-500 space-y-2 mb-6">
-            <li className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-              Direct checkout (no cart)
-            </li>
-            <li className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-              Recurring card payments
-            </li>
-            <li className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-              Products from Stripe Dashboard
-            </li>
-          </ul>
-
-          <div className="flex items-center text-purple-600 font-medium group-hover:text-purple-700">
-            View Plans
-            <svg className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-            </svg>
-          </div>
-        </Link>
-      </div>
-
-      {/* Demo Info */}
-      <div className="mt-12 max-w-2xl mx-auto px-4">
-        <div className="bg-indigo-50 rounded-lg p-6 text-center">
-          <h3 className="font-semibold text-indigo-900">
-            Stripe Custom Payment Methods Demo
-          </h3>
-          <p className="mt-2 text-sm text-indigo-700">
-            This demo showcases Stripe&apos;s Custom Payment Methods feature, integrating
-            HitPay PayNow alongside native Stripe payments in a unified checkout experience.
-          </p>
         </div>
-      </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        {/* Tab bar */}
+        <div className="flex gap-1 border-b border-gray-200 mb-8">
+          <button
+            onClick={() => setActiveTab('one_time')}
+            className={`px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === 'one_time'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            One-time payments
+          </button>
+          <button
+            onClick={() => setActiveTab('subscriptions')}
+            className={`px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === 'subscriptions'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Subscriptions
+          </button>
+        </div>
+
+        {/* One-time payments tab */}
+        {activeTab === 'one_time' && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {products.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
+            </div>
+            <div className="mt-8 bg-indigo-50 rounded-lg p-4 text-sm text-indigo-700">
+              At checkout, pay with Card or PayNow QR (Custom Payment Method). Cart is at{' '}
+              <Link href="/shop/cart" className="underline font-medium">
+                /shop/cart
+              </Link>
+              .
+            </div>
+          </>
+        )}
+
+        {/* Subscriptions tab */}
+        {activeTab === 'subscriptions' && (
+          <>
+            {subLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <svg className="animate-spin w-8 h-8 text-indigo-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              </div>
+            ) : subProducts.length === 0 ? (
+              <div className="text-center py-20">
+                <p className="text-gray-500 text-lg">No subscription products found.</p>
+                <p className="text-gray-400 text-sm mt-2">
+                  Create a recurring product in your{' '}
+                  <span className="font-medium">Stripe Dashboard → Products</span>.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {subProducts.map((product) => (
+                  <ProductCard key={product.id} product={product} />
+                ))}
+              </div>
+            )}
+            <div className="mt-8 bg-purple-50 rounded-lg p-4 text-sm text-purple-700">
+              Automatic billing · Cancel anytime. Supports out-of-band invoice payment and auto-charge via HitPay.
+            </div>
+          </>
+        )}
+      </main>
     </div>
   );
 }

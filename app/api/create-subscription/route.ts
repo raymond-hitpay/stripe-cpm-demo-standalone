@@ -88,6 +88,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 1: Create or retrieve Customer
+    if (!email) {
+      console.warn('[Subscription] WARNING: No email provided — customer will be created anonymously and cannot be found via portal email lookup');
+    }
+
     let customer: Stripe.Customer;
     if (email) {
       const existingCustomers = await stripeSubscriptions.customers.list({
