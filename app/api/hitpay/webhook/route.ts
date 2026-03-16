@@ -22,6 +22,7 @@
  * @see https://hit-pay.com/docs/api#webhooks
  */
 import { NextRequest, NextResponse } from 'next/server';
+import Stripe from 'stripe';
 import {
   verifyHitPayWebhook,
   verifyHitPayJsonWebhook,
@@ -60,6 +61,190 @@ function resolveCpmTypeIdFromPaymentType(paymentType: string | undefined): strin
   return getOneTimeCpms()[0]?.id ?? 'cpmt_xxx';
 }
 
+/**
+ * Handles the actual `charge.created` recurring webhook payload from HitPay.
+ *
+ * Payload shape (no "event" field, no "hmac"):
+ * {
+ *   id: string,           // HitPay charge ID
+ *   channel: 'recurrent',
+ *   status: 'succeeded' | ...,
+ *   payment_provider: { charge: { method: 'grabpay_recurring' | ... } },
+ *   relatable: {
+ *     type: 'business_charge',
+ *     business_charge: {
+ *       reference: 'sub_xxx',
+ *       redirect_url: 'https://site/subscribe/setup?subscription_id=...&customer_id=...&invoice_id=...'
+ *     }
+ *   }
+ * }
+ */
+async function handleRecurringChargeWebhook(payload: Record<string, unknown>) {
+  const chargeId = payload.id as string;
+  const status = (payload.status as string)?.toLowerCase();
+
+  if (status !== 'succeeded') {
+    console.log('[HitPay Webhook] Recurring charge non-succeeded:', status);
+    return { received: true };
+  }
+
+  const relatable = payload.relatable as Record<string, unknown> | undefined;
+  const businessCharge = relatable?.business_charge as Record<string, unknown> | undefined;
+
+  if (!businessCharge) {
+    console.warn('[HitPay Webhook] charge.created: missing relatable.business_charge');
+    return { received: true };
+  }
+
+  // Extract invoiceId and customerId from redirect_url query params
+  const redirectUrl = businessCharge.redirect_url as string;
+  let invoiceId: string | null = null;
+  let stripeCustomerId: string | null = null;
+  try {
+    const urlParams = new URL(redirectUrl).searchParams;
+    invoiceId = urlParams.get('invoice_id');
+    stripeCustomerId = urlParams.get('customer_id');
+  } catch {
+    console.warn('[HitPay Webhook] charge.created: invalid redirect_url:', redirectUrl);
+  }
+
+  // Fallback: use businessCharge.reference (subscription ID) to find the open invoice
+  const subscriptionRef = businessCharge.reference as string | undefined;
+  if (!invoiceId && subscriptionRef?.startsWith('sub_')) {
+    console.log('[HitPay Webhook] charge.created: falling back to subscription lookup:', subscriptionRef);
+    try {
+      const invoices = await stripe.invoices.list({
+        subscription: subscriptionRef,
+        status: 'open',
+        limit: 1,
+      });
+      const fallbackInvoice = invoices.data[0];
+      if (fallbackInvoice) {
+        invoiceId = fallbackInvoice.id;
+        stripeCustomerId = stripeCustomerId || (fallbackInvoice.customer as string) || null;
+        console.log('[HitPay Webhook] charge.created: found invoice via subscription:', invoiceId);
+      }
+    } catch (lookupErr) {
+      console.error('[HitPay Webhook] charge.created: subscription invoice lookup failed:', lookupErr);
+    }
+  }
+
+  if (!invoiceId || !stripeCustomerId) {
+    console.warn('[HitPay Webhook] charge.created: missing invoice_id or customer_id');
+    return { received: true };
+  }
+
+  console.log('[HitPay Webhook] charge.created (recurrent):', {
+    chargeId,
+    invoiceId,
+    stripeCustomerId,
+    subscriptionRef: businessCharge.reference,
+  });
+
+  // Retrieve invoice
+  const invoice = await stripe.invoices.retrieve(invoiceId);
+
+  // Idempotency: if already paid and NOT in pending state, skip entirely
+  if (invoice.status === 'paid' ||
+      (invoice.metadata?.hitpay_payment_id && !invoice.metadata?.hitpay_charge_pending)) {
+    if (!invoice.metadata?.hitpay_webhook_confirmed) {
+      await stripe.invoices.update(invoiceId, {
+        metadata: { ...invoice.metadata, hitpay_webhook_confirmed: 'true' },
+      });
+    }
+    console.log('[HitPay Webhook] charge.created: invoice already processed:', invoiceId);
+    return { received: true, message: 'Already processed' };
+  }
+
+  // Retrieve customer to get CPM type
+  const customer = (await stripe.customers.retrieve(stripeCustomerId)) as Stripe.Customer;
+  const recurringBillingId = customer.metadata?.hitpay_recurring_billing_id || '';
+  let resolvedCpmTypeId = customer.metadata?.hitpay_cpm_type_id;
+
+  // Fallback: resolve CPM from payment_provider.charge.method
+  if (!resolvedCpmTypeId) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const chargeMethod = ((payload.payment_provider as any)?.charge as any)?.method as
+      | string
+      | undefined;
+    if (chargeMethod) {
+      const match = CUSTOM_PAYMENT_METHODS.find((pm) => pm.hitpayRecurringMethod === chargeMethod);
+      if (match) resolvedCpmTypeId = match.id;
+    }
+  }
+
+  let paymentRecordId: string | null = null;
+  let paymentMethodId: string | null = null;
+  let invoiceMarkedAsPaid = false;
+
+  if (resolvedCpmTypeId) {
+    try {
+      const paymentMethod = await stripe.paymentMethods.create({
+        type: 'custom',
+        custom: { type: resolvedCpmTypeId },
+      });
+      paymentMethodId = paymentMethod.id;
+      await stripe.paymentMethods.attach(paymentMethod.id, { customer: stripeCustomerId });
+
+      const paymentRecord = await stripe.paymentRecords.reportPayment(
+        {
+          amount_requested: { value: invoice.amount_due, currency: invoice.currency },
+          customer_details: { customer: stripeCustomerId },
+          payment_method_details: { payment_method: paymentMethod.id },
+          processor_details: { type: 'custom', custom: { payment_reference: chargeId } },
+          initiated_at: Math.floor(Date.now() / 1000),
+          customer_presence: 'off_session',
+          outcome: 'guaranteed',
+          guaranteed: { guaranteed_at: Math.floor(Date.now() / 1000) },
+          metadata: {
+            hitpay_charge_id: chargeId,
+            hitpay_recurring_billing_id: recurringBillingId,
+            stripe_invoice_id: invoiceId,
+            charged_via: 'charge_created_webhook',
+          },
+        },
+        { idempotencyKey: `prec-charge-${chargeId}` }
+      );
+      paymentRecordId = paymentRecord.id;
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (stripe.invoices as any).attachPayment(invoiceId, {
+          payment_record: paymentRecord.id,
+        });
+        invoiceMarkedAsPaid = true;
+      } catch {
+        await stripe.invoices.pay(invoiceId, { paid_out_of_band: true });
+        invoiceMarkedAsPaid = true;
+      }
+    } catch (err) {
+      console.error('[HitPay Webhook] charge.created: record error:', err);
+    }
+  }
+
+  if (!invoiceMarkedAsPaid) {
+    try {
+      await stripe.invoices.pay(invoiceId, { paid_out_of_band: true });
+    } catch (err) {
+      console.error('[HitPay Webhook] charge.created: fallback pay error:', err);
+    }
+  }
+
+  await stripe.invoices.update(invoiceId, {
+    metadata: {
+      hitpay_payment_id: chargeId,
+      hitpay_recurring_billing_id: recurringBillingId,
+      stripe_payment_record_id: paymentRecordId || '',
+      stripe_payment_method_id: paymentMethodId || '',
+      charged_via: 'charge_created_webhook',
+      hitpay_webhook_confirmed: 'true',
+    },
+  });
+
+  console.log('[HitPay Webhook] charge.created processed:', { invoiceId, paymentRecordId });
+  return { received: true, paymentRecordId };
+}
+
 export async function POST(request: NextRequest) {
   try {
     // -------------------------------------------------------------------------
@@ -83,6 +268,12 @@ export async function POST(request: NextRequest) {
         payload = JSON.parse(rawBody);
       } catch {
         return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+
+      // Recurring charge webhook: channel === 'recurrent', no "event" field
+      if (typeof payload.channel === 'string' && payload.channel === 'recurrent') {
+        const result = await handleRecurringChargeWebhook(payload);
+        return NextResponse.json(result);
       }
 
       const status = (payload.status as string)?.toLowerCase();
@@ -263,6 +454,15 @@ export async function POST(request: NextRequest) {
 
       // Unhandled event type — acknowledge and move on
       return NextResponse.json({ received: true });
+    }
+
+    // -------------------------------------------------------------------------
+    // Recurring charge webhook arriving without Hitpay-Signature header
+    // (defensive fallback — same payload shape, channel === 'recurrent')
+    // -------------------------------------------------------------------------
+    if (typeof rawPayload.channel === 'string' && rawPayload.channel === 'recurrent') {
+      const result = await handleRecurringChargeWebhook(rawPayload);
+      return NextResponse.json(result);
     }
 
     // -------------------------------------------------------------------------

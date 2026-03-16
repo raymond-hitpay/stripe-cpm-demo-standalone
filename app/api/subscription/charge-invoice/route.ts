@@ -44,6 +44,7 @@ export const dynamic = 'force-dynamic';
  */
 export interface ChargeInvoiceResult {
   success: boolean;
+  pending?: boolean;
   invoiceId: string;
   invoiceStatus: string;
   subscriptionId?: string;
@@ -93,8 +94,8 @@ export async function chargeInvoiceInternal(
     };
   }
 
-  // Check idempotency - if hitpay_payment_id exists, already processed
-  if (invoice.metadata?.hitpay_payment_id) {
+  // Check idempotency - if hitpay_payment_id exists and charge is NOT pending, already processed
+  if (invoice.metadata?.hitpay_payment_id && !invoice.metadata?.hitpay_charge_pending) {
     console.log(`${logPrefix} Invoice already has hitpay_payment_id, skipping: ${invoiceId}`);
     return {
       success: true,
@@ -173,6 +174,32 @@ export async function chargeInvoiceInternal(
       amountToCharge,
       currency
     );
+
+    if (hitpayCharge.status === 'pending') {
+      // Charge is in progress — store the payment ID to prevent duplicate charges
+      // and return pending so the setup page can close gracefully.
+      // The charge.created webhook will record the payment and mark the invoice paid.
+      console.log(`${logPrefix} HitPay charge pending: ${hitpayCharge.payment_id}`);
+      await stripe.invoices.update(invoiceId, {
+        metadata: {
+          hitpay_payment_id: hitpayCharge.payment_id,
+          hitpay_charge_pending: 'true',
+          charged_at: new Date().toISOString(),
+          charged_via: source,
+        },
+      });
+      return {
+        success: true,
+        pending: true,
+        invoiceId: invoice.id,
+        invoiceStatus: invoice.status,
+        hitpayPaymentId: hitpayCharge.payment_id,
+        amount: amountToCharge,
+        currency,
+        originUrl,
+        message: 'HitPay charge initiated — waiting for webhook confirmation',
+      };
+    }
 
     if (hitpayCharge.status !== 'succeeded') {
       console.error(`${logPrefix} HitPay charge failed: ${hitpayCharge.status}`);

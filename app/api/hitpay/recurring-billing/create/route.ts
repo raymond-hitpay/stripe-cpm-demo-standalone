@@ -116,6 +116,7 @@ export async function POST(request: NextRequest) {
       webhook: webhookUrl.toString(),
       redirect_url: redirectUrl.toString(),
       reference: subscriptionId,
+      generate_qr: true,
     });
 
     console.log(`[HitPay Recurring] Created session: ${session.id}`);
@@ -138,6 +139,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       recurringBillingId: session.id,
       redirectUrl: session.url,
+      qrCode: session.qr_code_data?.qr_code,
+      directLinkUrl: session.direct_link?.direct_link_url,
       status: session.status,
     });
   } catch (error) {

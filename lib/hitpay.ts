@@ -136,6 +136,10 @@ export interface HitPayPaymentResponse {
   qr_currency?: string;
   /** When charge currency differs: exchange rate (1 request currency = fx_rate qr currency) */
   fx_rate?: string;
+  /** Direct link for app-based payment methods (Shopee, GrabPay, TNG) */
+  direct_link?: {
+    direct_link_url: string;
+  };
   /** Array of payments (present when payment request has been paid) */
   payments?: HitPayPayment[];
 }
@@ -406,6 +410,8 @@ export interface HitPayRecurringBillingRequest {
   redirect_url?: string;
   /** Your reference for this recurring billing (e.g., Stripe subscription ID) */
   reference?: string;
+  /** Request a QR code or direct link in the response (for app-based methods) */
+  generate_qr?: boolean;
 }
 
 /**
@@ -450,6 +456,15 @@ export interface HitPayRecurringBillingResponse {
   created_at: string;
   /** Last update timestamp */
   updated_at: string;
+  /** QR code data if generate_qr was true and method supports QR */
+  qr_code_data?: {
+    qr_code: string;
+    qr_code_expiry: string | null;
+  };
+  /** Direct link for app-based methods (Shopee, GrabPay, TNG) */
+  direct_link?: {
+    direct_link_url: string;
+  };
 }
 
 /**
@@ -523,6 +538,7 @@ export async function createRecurringBilling(
   if (data.webhook) formData.append('webhook', data.webhook);
   if (data.redirect_url) formData.append('redirect_url', data.redirect_url);
   if (data.reference) formData.append('reference', data.reference);
+  if (data.generate_qr) formData.append('generate_qr', 'true');
 
   const response = await fetch(`${HITPAY_API_BASE}/recurring-billing`, {
     method: 'POST',
@@ -583,17 +599,26 @@ export async function chargeRecurringBilling(
   formData.append('amount', amount.toFixed(2));
   formData.append('currency', currency.toUpperCase());
 
-  const response = await fetch(
-    `${HITPAY_API_BASE}/charge/recurring-billing/${recurringBillingId}`,
-    {
-      method: 'POST',
-      headers: {
-        'X-BUSINESS-API-KEY': apiKey,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: formData.toString(),
-    }
-  );
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${HITPAY_API_BASE}/charge/recurring-billing/${recurringBillingId}`,
+      {
+        method: 'POST',
+        headers: {
+          'X-BUSINESS-API-KEY': apiKey,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData.toString(),
+        signal: controller.signal,
+      }
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const error = await response.text();

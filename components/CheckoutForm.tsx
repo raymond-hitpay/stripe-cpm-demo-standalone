@@ -193,9 +193,14 @@ export function CheckoutForm({
 
       const data = await response.json();
 
-      // Check if QR code was actually generated
-      if (!data.qrCode) {
-        // Store checkout URL as fallback if available
+      if (data.qrCode) {
+        // QR code available — render it inline
+      } else if (data.directLinkUrl) {
+        // App-based method (Shopee, GrabPay, TNG) — redirect directly
+        window.location.href = data.directLinkUrl;
+        return;
+      } else {
+        // No QR and no direct link — fall back to HitPay hosted page
         if (data.checkoutUrl) {
           setFallbackCheckoutUrl(data.checkoutUrl);
         }

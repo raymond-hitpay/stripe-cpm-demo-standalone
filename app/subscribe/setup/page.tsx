@@ -15,7 +15,7 @@
 'use client';
 
 import { useEffect, useState, useRef, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 // =============================================================================
@@ -24,7 +24,6 @@ import Link from 'next/link';
 
 function SetupContent() {
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   // Get params from URL
   const subscriptionId = searchParams.get('subscription_id');
@@ -35,12 +34,13 @@ function SetupContent() {
   const status = searchParams.get('status');
 
   // State
-  const [step, setStep] = useState<'verifying' | 'charging' | 'success' | 'error'>('verifying');
+  const [step, setStep] = useState<'verifying' | 'waiting' | 'success' | 'error'>('verifying');
   const [error, setError] = useState<string | null>(null);
   const [chargeResult, setChargeResult] = useState<{
     paymentId: string;
     amount: number;
     currency: string;
+    pending?: boolean;
   } | null>(null);
 
   // Prevent duplicate processing
@@ -73,56 +73,33 @@ function SetupContent() {
           );
         }
 
-        // Step 1: Get the HitPay recurring billing session
-        // The reference should be the subscription ID we passed
-        // For now, we'll look up the customer's metadata to find the recurring billing ID
-        // In a real implementation, you'd get this from HitPay's webhook or redirect params
+        setStep('waiting');
 
-        // Step 2: Update customer metadata with the recurring billing info
-        // We need an API endpoint to do this
-        setStep('charging');
-
-        // Step 3: Charge the first invoice
-        const chargeResponse = await fetch('/api/subscription/charge-invoice', {
+        // Directly charge the invoice — more reliable than waiting for webhook
+        // chargeInvoiceInternal is idempotent: if webhook already charged it, it skips
+        const res = await fetch('/api/subscription/charge-invoice', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            invoiceId,
-          }),
+          body: JSON.stringify({ invoiceId }),
         });
+        const data = await res.json();
 
-        const chargeData = await chargeResponse.json();
-
-        if (!chargeResponse.ok || chargeData.error) {
-          // If charge fails, it might be because the recurring billing isn't set up yet
-          // This could happen if the user cancelled the HitPay flow
-          throw new Error(chargeData.error || chargeData.details || 'Failed to charge first invoice');
-        }
-
-        if (chargeData.skipped) {
-          // Invoice was already paid by the server-side webhook before this redirect arrived
-          console.log('[Setup] Invoice already paid — skipping charge (webhook handled it)');
-        } else {
-          console.log('[Setup] First invoice charged:', chargeData);
+        if (!res.ok || data.error) {
+          throw new Error(data.error || 'Failed to charge invoice');
         }
 
         setChargeResult({
-          paymentId: chargeData.hitpayPaymentId || '',
-          amount: chargeData.amount || 0,
-          currency: chargeData.currency || 'SGD',
+          paymentId: data.hitpayPaymentId || '',
+          amount: data.amount || 0,
+          currency: data.currency || 'SGD',
+          pending: !!data.pending,
         });
-
+        // pending: charge was initiated but not yet confirmed by HitPay webhook
+        // success: charge confirmed synchronously
+        // Both cases: show success UI and let the original tab's polling handle redirect.
         setStep('success');
-
-        // Redirect to success page after a short delay
-        setTimeout(() => {
-          const params = new URLSearchParams({
-            subscription_id: subscriptionId,
-            method: 'auto_charge',
-            hitpay_id: chargeData.hitpayPaymentId || '',
-          });
-          router.push(`/subscribe/success?${params.toString()}`);
-        }, 2000);
+        // Do NOT redirect — the original tab owns the success UX.
+        // Just show "close this tab" message.
       } catch (err) {
         console.error('[Setup] Error:', err);
         setStep('error');
@@ -131,7 +108,7 @@ function SetupContent() {
     };
 
     processSetup();
-  }, [subscriptionId, customerId, invoiceId, reference, status, router]);
+  }, [subscriptionId, customerId, invoiceId, reference, status]);
 
   const formatPrice = (price: number, currency: string = 'SGD') => {
     return new Intl.NumberFormat('en-SG', {
@@ -155,14 +132,14 @@ function SetupContent() {
           </div>
         )}
 
-        {step === 'charging' && (
+        {step === 'waiting' && (
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
             <h2 className="mt-6 text-xl font-semibold text-gray-900">
-              Processing First Payment
+              Waiting for Payment Confirmation
             </h2>
             <p className="mt-2 text-gray-600">
-              Charging your saved payment method for the first invoice...
+              Your payment is being processed. This usually takes a few seconds.
             </p>
           </div>
         )}
@@ -175,14 +152,12 @@ function SetupContent() {
               </svg>
             </div>
             <h2 className="mt-6 text-xl font-semibold text-gray-900">
-              Subscription Activated!
+              {chargeResult?.pending ? 'Payment initiated!' : 'Payment complete!'}
             </h2>
             <p className="mt-2 text-gray-600">
-              Your payment method has been saved and the first payment of{' '}
-              {chargeResult && formatPrice(chargeResult.amount, chargeResult.currency)} was successful.
-            </p>
-            <p className="mt-4 text-sm text-gray-500">
-              Redirecting to confirmation page...
+              {chargeResult?.pending
+                ? 'Payment initiated — you can close this tab. The previous page will update when confirmed.'
+                : 'You can close this tab and return to the previous page.'}
             </p>
           </div>
         )}
@@ -199,11 +174,41 @@ function SetupContent() {
             </h2>
             <p className="mt-2 text-red-600">{error}</p>
             <div className="mt-6 space-y-3">
+              {invoiceId && (
+                <button
+                  onClick={async () => {
+                    setStep('waiting');
+                    setError(null);
+                    try {
+                      const res = await fetch('/api/subscription/charge-invoice', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ invoiceId }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok || data.error) throw new Error(data.error || 'Failed to charge invoice');
+                      setChargeResult({
+                        paymentId: data.hitpayPaymentId || '',
+                        amount: data.amount || 0,
+                        currency: data.currency || 'SGD',
+                      });
+                      setStep('success');
+                      // Do NOT redirect — original tab owns success UX.
+                    } catch (retryErr) {
+                      setStep('error');
+                      setError(retryErr instanceof Error ? retryErr.message : 'Retry failed');
+                    }
+                  }}
+                  className="block w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium text-center"
+                >
+                  Retry Payment
+                </button>
+              )}
               <Link
                 href="/subscriptions"
-                className="block w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium text-center"
+                className="block w-full bg-gray-100 text-gray-700 py-3 rounded-lg hover:bg-gray-200 transition-colors font-medium text-center"
               >
-                Try Again
+                Start Over
               </Link>
               <Link
                 href="/"

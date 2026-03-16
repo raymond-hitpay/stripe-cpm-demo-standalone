@@ -14,7 +14,8 @@
 'use client';
 
 import { PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   isCustomPaymentMethod,
   getPaymentMethodConfig,
@@ -64,9 +65,20 @@ export function AutoChargePaymentElement({
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newTabOpened, setNewTabOpened] = useState(false);
+  const [pollingTimedOut, setPollingTimedOut] = useState(false);
 
   // Ref to prevent duplicate submissions
   const hasInitiatedRedirect = useRef(false);
+
+  const router = useRouter();
+  const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingStarted = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearTimeout(pollingRef.current);
+    };
+  }, []);
 
   // Check if selected method is a HitPay CPM
   const isHitPayCpm = selectedPaymentMethodType
@@ -77,6 +89,51 @@ export function AutoChargePaymentElement({
   const selectedCpmConfig = selectedPaymentMethodType && isHitPayCpm
     ? getPaymentMethodConfig(selectedPaymentMethodType)
     : null;
+
+  /**
+   * Polls /api/subscription/invoice-status until paid, then redirects to success.
+   */
+  const startPollingForPayment = (invoiceIdToCheck: string) => {
+    if (pollingStarted.current) return;
+    pollingStarted.current = true;
+
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60; // 60 × 2s = 120s
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/subscription/invoice-status?invoiceId=${invoiceIdToCheck}`);
+        const data = await res.json();
+
+        if (data.paid) {
+          console.log('[AutoCharge] Invoice paid — redirecting original tab to success');
+          const params = new URLSearchParams({
+            subscription_id: subscriptionId,
+            method: 'auto_charge',
+            hitpay_id: data.hitpayPaymentId || '',
+          });
+          router.push(`/subscribe/success?${params.toString()}`);
+          return;
+        }
+
+        attempts++;
+        if (attempts < MAX_ATTEMPTS) {
+          pollingRef.current = setTimeout(poll, 2000);
+        } else {
+          setPollingTimedOut(true);
+        }
+      } catch {
+        attempts++;
+        if (attempts < MAX_ATTEMPTS) {
+          pollingRef.current = setTimeout(poll, 2000);
+        } else {
+          setPollingTimedOut(true);
+        }
+      }
+    };
+
+    poll();
+  };
 
   /**
    * Initiates redirect to HitPay for payment method authorization.
@@ -114,12 +171,22 @@ export function AutoChargePaymentElement({
       throw new Error(data.error + (data.details ? `: ${data.details}` : ''));
     }
 
-    if (data.redirectUrl && newTab) {
-      console.log('[AutoCharge] Opening HitPay in new tab:', data.redirectUrl);
+    if (data.directLinkUrl && newTab) {
+      // App-based method (Shopee, GrabPay, TNG) — redirect directly to the app
+      console.log('[AutoCharge] Using direct link:', data.directLinkUrl);
+      newTab.location.href = data.directLinkUrl;
+      setIsProcessing(false);
+      setNewTabOpened(true);
+      hasInitiatedRedirect.current = false;
+      startPollingForPayment(invoiceId);
+    } else if (data.redirectUrl && newTab) {
+      // Fallback — HitPay hosted checkout page (existing behavior)
+      console.log('[AutoCharge] Opening HitPay hosted page:', data.redirectUrl);
       newTab.location.href = data.redirectUrl;
       setIsProcessing(false);
       setNewTabOpened(true);
       hasInitiatedRedirect.current = false;
+      startPollingForPayment(invoiceId);
     } else {
       newTab?.close();
       throw new Error('No redirect URL received from HitPay');
@@ -228,8 +295,8 @@ export function AutoChargePaymentElement({
         </div>
       </div>
 
-      {/* Payment Element */}
-      <div className="relative">
+      {/* Payment Element — hidden once new tab opens */}
+      <div className={`relative${newTabOpened ? ' hidden' : ''}`}>
         <PaymentElement
           options={{
             layout: 'tabs',
@@ -274,65 +341,117 @@ export function AutoChargePaymentElement({
         )}
       </div>
 
-      {/* Error message */}
-      {error && (
+      {/* Error message — hidden once new tab opens */}
+      {error && !newTabOpened && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <p className="text-red-600 text-sm">{error}</p>
         </div>
       )}
 
-      {/* New tab info banner */}
+      {/* Waiting state — replaces form after new tab opens */}
       {newTabOpened && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <p className="text-blue-700 text-sm font-medium">
-            HitPay authorization opened in a new tab.
-          </p>
-          <p className="text-blue-600 text-sm mt-1">
-            Complete the authorization there to finish setting up auto-charge.
-          </p>
+        <div className="py-8 text-center space-y-4">
+          {pollingTimedOut ? (
+            <>
+              <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mx-auto">
+                <svg className="w-6 h-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M12 2a10 10 0 100 20A10 10 0 0012 2z" />
+                </svg>
+              </div>
+              <p className="text-gray-800 font-medium">
+                Payment is taking longer than expected.
+              </p>
+              <p className="text-gray-500 text-sm">
+                Please check back shortly or contact support if the issue persists.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setPollingTimedOut(false);
+                  pollingStarted.current = false;
+                  startPollingForPayment(invoiceId);
+                }}
+                className="mx-auto block bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition-colors font-medium text-sm"
+              >
+                Check again
+              </button>
+            </>
+          ) : (
+            <>
+              <svg
+                className="animate-spin h-10 w-10 text-purple-600 mx-auto"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
+              </svg>
+              <p className="text-gray-800 font-medium">
+                Waiting for payment confirmation in new tab...
+              </p>
+              <p className="text-gray-500 text-sm">
+                Complete the authorization in the new tab. This page will update automatically.
+              </p>
+            </>
+          )}
         </div>
       )}
 
-      {/* Setup button */}
-      <button
-        type="button"
-        onClick={handleSetupClick}
-        disabled={!selectedPaymentMethodType || isProcessing || !stripe}
-        className="w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {isProcessing ? (
-          <span className="flex items-center justify-center gap-2">
-            <svg
-              className="animate-spin h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
-            </svg>
-            {getButtonText()}
-          </span>
-        ) : (
-          getButtonText()
-        )}
-      </button>
+      {/* Setup button — hidden once new tab opened */}
+      {!newTabOpened && (
+        <>
+          <button
+            type="button"
+            onClick={handleSetupClick}
+            disabled={!selectedPaymentMethodType || isProcessing || !stripe}
+            className="w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isProcessing ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg
+                  className="animate-spin h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                {getButtonText()}
+              </span>
+            ) : (
+              getButtonText()
+            )}
+          </button>
 
-      {/* Terms disclaimer */}
-      <p className="text-xs text-gray-500 text-center">
-        By continuing, you authorize automatic charges to your payment method
-        for future billing cycles.
-      </p>
+          {/* Terms disclaimer */}
+          <p className="text-xs text-gray-500 text-center">
+            By continuing, you authorize automatic charges to your payment method
+            for future billing cycles.
+          </p>
+        </>
+      )}
     </div>
   );
 }

@@ -127,6 +127,7 @@ export async function POST(request: NextRequest) {
       paymentRequestId: paymentRequest.id,
       qrCode: paymentRequest.qr_code_data?.qr_code,
       qrCodeExpiry: paymentRequest.qr_code_data?.qr_code_expiry,
+      directLinkUrl: paymentRequest.direct_link?.direct_link_url,
       status: paymentRequest.status,
       checkoutUrl: paymentRequest.url,
       amount: paymentRequest.amount,
