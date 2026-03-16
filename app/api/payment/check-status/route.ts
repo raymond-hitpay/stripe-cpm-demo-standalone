@@ -1,20 +1,18 @@
 /**
  * POST /api/payment/check-status
  *
- * Checks the HitPay payment status and records completed payments in Stripe.
+ * Checks payment status. Webhook-first: checks Stripe metadata before
+ * calling the HitPay API, so once the webhook has fired the polling
+ * returns immediately without making an external API call.
  *
- * This endpoint is polled by the frontend every few seconds after displaying
- * a PayNow QR code. When the payment is completed:
- * 1. Creates a Stripe PaymentMethod with the custom payment type
- * 2. Records the payment via Stripe's Payment Records API
- * 3. Updates the PaymentIntent metadata for reference
+ * Flow:
+ * 1. Retrieve PaymentIntent from Stripe
+ * 2. If stripe_payment_record_id metadata exists → payment already recorded → return completed
+ * 3. Otherwise → call HitPay API to check status
+ * 4. If completed → create PaymentMethod + PaymentRecord (with idempotency key) → return completed
  *
- * Idempotency: If the payment has already been recorded (checked via
- * PaymentIntent metadata), returns the existing record without creating duplicates.
- *
- * Error Recovery: If Stripe recording fails but HitPay confirms payment,
- * still returns success since the customer has paid. The error is logged
- * for manual reconciliation.
+ * Idempotency: Uses idempotencyKey `prec-{hitpayPaymentRequestId}` on reportPayment()
+ * so concurrent webhook + polling calls cannot create duplicate records.
  *
  * @example Request
  * ```json
@@ -94,10 +92,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use the provided CPM Type ID or resolve from config (Payment Element may send generic type)
     const cpmTypeId = resolveCpmTypeId(customPaymentMethodTypeId);
 
-    // Step 1: Check HitPay payment status
+    // Step 1: Retrieve PaymentIntent and check if webhook already recorded the payment
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+    if (paymentIntent.metadata?.stripe_payment_record_id) {
+      console.log(
+        `[Payment Check] Payment already recorded: ${paymentIntent.metadata.stripe_payment_record_id}`
+      );
+      return NextResponse.json({
+        status: 'completed',
+        stripe: {
+          paymentRecordId: paymentIntent.metadata.stripe_payment_record_id,
+          paymentIntentId,
+        },
+        message: 'Payment already recorded',
+      });
+    }
+
+    // Step 2: Webhook hasn't fired yet — check HitPay API
     console.log(
       `[Payment Check] Checking HitPay status for: ${hitpayPaymentRequestId}`
     );
@@ -106,12 +120,10 @@ export async function POST(request: NextRequest) {
     const statusLower = hitpayStatus.status?.toLowerCase() ?? '';
     console.log(`[Payment Check] HitPay status: ${hitpayStatus.status} (normalized: ${statusLower})`);
 
-    // Step 2: If payment is completed, record it in Stripe
+    // Step 3: If payment is completed, record it in Stripe
     if (statusLower === 'completed') {
       console.log(`[Payment Check] Payment completed, recording in Stripe...`);
 
-      // Extract the actual HitPay payment ID (transaction ID) from the payments array
-      // HitPay may use 'id' or 'payment_id' in the nested payment object
       const firstPayment = hitpayStatus.payments?.[0];
       const hitpayPaymentId =
         firstPayment?.id ??
@@ -120,33 +132,7 @@ export async function POST(request: NextRequest) {
       console.log(`[Payment Check] HitPay Payment ID: ${hitpayPaymentId}`);
 
       try {
-        // Get the PaymentIntent
-        const paymentIntent =
-          await stripe.paymentIntents.retrieve(paymentIntentId);
-
-        // Idempotency check: If we already recorded this payment, return existing record
-        if (paymentIntent.metadata?.stripe_payment_record_id) {
-          console.log(
-            `[Payment Check] Payment already recorded: ${paymentIntent.metadata.stripe_payment_record_id}`
-          );
-          return NextResponse.json({
-            status: 'completed',
-            hitpay: {
-              id: hitpayStatus.id,
-              paymentId: hitpayPaymentId,
-              status: hitpayStatus.status,
-              amount: hitpayStatus.amount,
-              currency: hitpayStatus.currency,
-            },
-            stripe: {
-              paymentRecordId: paymentIntent.metadata.stripe_payment_record_id,
-              paymentIntentId: paymentIntentId,
-            },
-            message: 'Payment already recorded',
-          });
-        }
-
-        // Step 2a: Create an instance of a custom payment method
+        // Step 3a: Create an instance of a custom payment method
         const paymentMethod = await stripe.paymentMethods.create({
           type: 'custom',
           custom: {
@@ -156,43 +142,45 @@ export async function POST(request: NextRequest) {
 
         console.log(`[Payment Check] Created PaymentMethod: ${paymentMethod.id}`);
 
-        // Step 2b: Report the payment to Stripe using Payment Records API
-        // This creates a payment record that shows in the Stripe Dashboard
-        const paymentRecord = await stripe.paymentRecords.reportPayment({
-          amount_requested: {
-            value: paymentIntent.amount,
-            currency: paymentIntent.currency,
-          },
-          payment_method_details: {
-            payment_method: paymentMethod.id,
-          },
-          processor_details: {
-            type: 'custom',
-            custom: {
-              payment_reference: hitpayPaymentId,
+        // Step 3b: Report the payment to Stripe (idempotency key prevents duplicates with webhook)
+        const paymentRecord = await stripe.paymentRecords.reportPayment(
+          {
+            amount_requested: {
+              value: paymentIntent.amount,
+              currency: paymentIntent.currency,
+            },
+            payment_method_details: {
+              payment_method: paymentMethod.id,
+            },
+            processor_details: {
+              type: 'custom',
+              custom: {
+                payment_reference: hitpayPaymentId,
+              },
+            },
+            initiated_at: Math.floor(Date.now() / 1000),
+            customer_presence: 'on_session',
+            outcome: 'guaranteed',
+            guaranteed: {
+              guaranteed_at: Math.floor(Date.now() / 1000),
+            },
+            metadata: {
+              hitpay_payment_id: hitpayPaymentId,
+              hitpay_payment_request_id: hitpayPaymentRequestId,
+              hitpay_reference: hitpayStatus.reference_number || '',
+              stripe_payment_intent_id: paymentIntentId,
+              stripe_payment_method_id: paymentMethod.id,
+              recorded_via: 'polling',
             },
           },
-          initiated_at: Math.floor(Date.now() / 1000),
-          customer_presence: 'on_session',
-          outcome: 'guaranteed',
-          guaranteed: {
-            guaranteed_at: Math.floor(Date.now() / 1000),
-          },
-          metadata: {
-            hitpay_payment_id: hitpayPaymentId,
-            hitpay_payment_request_id: hitpayPaymentRequestId,
-            hitpay_reference: hitpayStatus.reference_number || '',
-            stripe_payment_intent_id: paymentIntentId,
-            stripe_payment_method_id: paymentMethod.id,
-            recorded_via: 'polling',
-          },
-        });
+          { idempotencyKey: `prec-${hitpayPaymentRequestId}` }
+        );
 
         console.log(
           `[Payment Check] Stripe payment record created: ${paymentRecord.id}`
         );
 
-        // Step 2c: Update PaymentIntent metadata for easy reference
+        // Step 3c: Update PaymentIntent metadata for easy reference
         await stripe.paymentIntents.update(paymentIntentId, {
           metadata: {
             external_payment_provider: 'hitpay',
@@ -227,8 +215,7 @@ export async function POST(request: NextRequest) {
           console.error('[Payment Check] Stripe raw error:', (stripeError as { raw?: unknown }).raw);
         }
 
-        // Update metadata even if payment record creation fails (hitpayPaymentId already in scope)
-        // This helps with manual reconciliation
+        // Update metadata even if payment record creation fails
         try {
           await stripe.paymentIntents.update(paymentIntentId, {
             metadata: {

@@ -1,15 +1,18 @@
 /**
  * POST /api/hitpay/webhook
  *
- * Webhook handler for HitPay payment notifications. Handles two event types:
+ * Webhook handler for HitPay payment notifications. Handles three event types:
  *
- * 1. One-time payment webhooks (form-urlencoded, no "event" field):
- *    Fired when a payment request status changes. Used as a backup to polling.
+ * 1. New-format one-time payment webhooks (JSON, `Hitpay-Signature` header):
+ *    New HitPay webhook format using HMAC-SHA256 of the raw JSON body.
+ *    Payload: { id, status, reference_number, payments: [{ id, payment_type, ... }] }
+ *    This is the primary payment detection mechanism — fires before polling detects completion.
  *
- * 2. recurring_billing.method_attached (JSON, "event" field present):
+ * 2. Old-format one-time payment webhooks (form-urlencoded or JSON, `hmac` in body):
+ *    Legacy format. Kept for backward compatibility.
+ *
+ * 3. recurring_billing.method_attached (JSON, "event" field present):
  *    Fired when a customer authorizes their payment method for auto-charge.
- *    This is the primary trigger for charging the first subscription invoice —
- *    more reliable than the browser redirect to /subscribe/setup.
  *
  * Setup Instructions:
  * 1. Deploy your app to get a public URL
@@ -19,18 +22,21 @@
  * @see https://hit-pay.com/docs/api#webhooks
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyHitPayWebhook, verifyHitPayJsonWebhook, getHitPayPaymentStatus } from '@/lib/hitpay';
+import {
+  verifyHitPayWebhook,
+  verifyHitPayJsonWebhook,
+  verifyHitPayHeaderSignature,
+  getHitPayPaymentStatus,
+} from '@/lib/hitpay';
 import { stripe } from '@/lib/stripe';
 import { chargeInvoiceInternal } from '@/app/api/subscription/charge-invoice/route';
+import { CUSTOM_PAYMENT_METHODS, getOneTimeCpms } from '@/config/payment-methods';
 
 // Disable caching for webhooks
 export const dynamic = 'force-dynamic';
 
-// Custom Payment Method Type ID - should match NEXT_PUBLIC_CPM_TYPE_ID
-const CPM_TYPE_ID = process.env.NEXT_PUBLIC_CPM_TYPE_ID || 'cpmt_xxx';
-
 /**
- * HitPay webhook payload structure
+ * HitPay webhook payload structure (old format)
  */
 interface HitPayWebhookPayload {
   payment_id: string;
@@ -42,10 +48,151 @@ interface HitPayWebhookPayload {
   hmac: string;
 }
 
+/**
+ * Resolves the Stripe CPM Type ID from a HitPay payment_type string.
+ * Falls back to the first one-time CPM if no match found.
+ */
+function resolveCpmTypeIdFromPaymentType(paymentType: string | undefined): string {
+  if (paymentType) {
+    const match = CUSTOM_PAYMENT_METHODS.find((pm) => pm.hitpayMethod === paymentType);
+    if (match) return match.id;
+  }
+  return getOneTimeCpms()[0]?.id ?? 'cpmt_xxx';
+}
+
 export async function POST(request: NextRequest) {
   try {
-    // Parse the webhook payload
-    // HitPay may send form-urlencoded or JSON depending on configuration
+    // -------------------------------------------------------------------------
+    // NEW FORMAT: Hitpay-Signature header present → new webhook format
+    // -------------------------------------------------------------------------
+    const hitpaySignatureHeader = request.headers.get('Hitpay-Signature');
+
+    if (hitpaySignatureHeader) {
+      const rawBody = await request.text();
+      const eventType = request.headers.get('Hitpay-Event-Type') || '';
+
+      console.log(`[HitPay Webhook] New format received, event: ${eventType}`);
+
+      if (!verifyHitPayHeaderSignature(rawBody, hitpaySignatureHeader)) {
+        console.error('[HitPay Webhook] Invalid Hitpay-Signature header — rejecting');
+        return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+      }
+
+      let payload: Record<string, unknown>;
+      try {
+        payload = JSON.parse(rawBody);
+      } catch {
+        return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+
+      const status = (payload.status as string)?.toLowerCase();
+
+      // Only process completed payments
+      if (status !== 'completed' && eventType !== 'completed') {
+        console.log(
+          `[HitPay Webhook] Ignoring non-completed: status=${status}, event=${eventType}`
+        );
+        return NextResponse.json({ received: true });
+      }
+
+      const payment_request_id = payload.id as string;
+      const reference_number = payload.reference_number as string;
+      const payments = payload.payments as Array<Record<string, unknown>> | undefined;
+      const firstPayment = payments?.[0];
+      const payment_id = (firstPayment?.id ??
+        firstPayment?.payment_id ??
+        payment_request_id) as string;
+      const payment_type = firstPayment?.payment_type as string | undefined;
+
+      const cpmTypeId = resolveCpmTypeIdFromPaymentType(payment_type);
+
+      console.log('[HitPay Webhook] New format:', {
+        payment_request_id,
+        reference_number,
+        payment_type,
+        cpmTypeId,
+      });
+
+      const paymentIntentId = reference_number;
+      if (!paymentIntentId || !paymentIntentId.startsWith('pi_')) {
+        console.log('[HitPay Webhook] No valid PaymentIntent reference in webhook');
+        return NextResponse.json({
+          received: true,
+          message: 'No PaymentIntent reference found — webhook acknowledged',
+        });
+      }
+
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+      if (paymentIntent.metadata?.stripe_payment_record_id) {
+        console.log(
+          '[HitPay Webhook] Payment already recorded:',
+          paymentIntent.metadata.stripe_payment_record_id
+        );
+        return NextResponse.json({
+          received: true,
+          message: 'Payment already recorded',
+          paymentRecordId: paymentIntent.metadata.stripe_payment_record_id,
+        });
+      }
+
+      const paymentMethod = await stripe.paymentMethods.create({
+        type: 'custom',
+        custom: { type: cpmTypeId },
+      });
+
+      const paymentRecord = await stripe.paymentRecords.reportPayment(
+        {
+          amount_requested: {
+            value: paymentIntent.amount,
+            currency: paymentIntent.currency,
+          },
+          payment_method_details: {
+            payment_method: paymentMethod.id,
+          },
+          processor_details: {
+            type: 'custom',
+            custom: { payment_reference: payment_request_id },
+          },
+          initiated_at: Math.floor(Date.now() / 1000),
+          customer_presence: 'on_session',
+          outcome: 'guaranteed',
+          guaranteed: { guaranteed_at: Math.floor(Date.now() / 1000) },
+          metadata: {
+            hitpay_payment_id: payment_id,
+            hitpay_request_id: payment_request_id,
+            stripe_payment_intent_id: paymentIntentId,
+            stripe_payment_method_id: paymentMethod.id,
+            recorded_via: 'webhook',
+          },
+        },
+        { idempotencyKey: `prec-${payment_request_id}` }
+      );
+
+      console.log('[HitPay Webhook] Payment record created:', paymentRecord.id);
+
+      await stripe.paymentIntents.update(paymentIntentId, {
+        metadata: {
+          external_payment_provider: 'hitpay',
+          external_payment_id: payment_request_id,
+          external_payment_status: 'completed',
+          stripe_payment_record_id: paymentRecord.id,
+          stripe_payment_method_id: paymentMethod.id,
+          recorded_via: 'webhook',
+        },
+      });
+
+      console.log('[HitPay Webhook] Successfully processed payment (new format)');
+      return NextResponse.json({
+        received: true,
+        paymentRecordId: paymentRecord.id,
+        message: 'Payment recorded successfully via webhook',
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // OLD FORMAT: Parse form-urlencoded or JSON body
+    // -------------------------------------------------------------------------
     const contentType = request.headers.get('content-type') || '';
     let rawPayload: Record<string, unknown>;
 
@@ -106,7 +253,6 @@ export async function POST(request: NextRequest) {
           console.log(`[HitPay Webhook] Invoice already paid — skipped: ${invoiceId}`);
         } else if (!result.success) {
           console.error(`[HitPay Webhook] Failed to charge invoice ${invoiceId}: ${result.error}`);
-          // Return 200 to prevent HitPay from retrying indefinitely for non-retryable errors
           return NextResponse.json({ received: true, warning: result.error });
         } else {
           console.log(`[HitPay Webhook] Invoice charged: ${invoiceId}, hitpay_payment_id=${result.hitpayPaymentId}`);
@@ -120,18 +266,16 @@ export async function POST(request: NextRequest) {
     }
 
     // -------------------------------------------------------------------------
-    // Handle one-time payment webhooks (flat payload, no "event" field)
+    // Handle old-format one-time payment webhooks (flat payload, no "event" field)
     // -------------------------------------------------------------------------
     const payload = rawPayload as unknown as HitPayWebhookPayload;
 
-    console.log('[HitPay Webhook] Received:', {
+    console.log('[HitPay Webhook] Received (old format):', {
       payment_request_id: payload.payment_request_id,
       reference_number: payload.reference_number,
       status: payload.status,
     });
 
-    // Step 1: Verify the webhook signature
-    // This prevents fraudulent requests from being processed
     const isValid = verifyHitPayWebhook(
       payload as unknown as Record<string, string>,
       payload.hmac
@@ -147,7 +291,6 @@ export async function POST(request: NextRequest) {
 
     console.log('[HitPay Webhook] Signature verified');
 
-    // Step 2: Only process completed payments
     if (payload.status !== 'completed') {
       console.log(`[HitPay Webhook] Ignoring non-completed status: ${payload.status}`);
       return NextResponse.json({
@@ -157,20 +300,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Step 3: Find the associated PaymentIntent using reference_number
-    // The reference_number was set to the PaymentIntent ID when creating the HitPay request
     const paymentIntentId = payload.reference_number;
 
     if (!paymentIntentId || !paymentIntentId.startsWith('pi_')) {
       console.log('[HitPay Webhook] No valid PaymentIntent reference in webhook');
-      // Still return 200 to prevent retries - this might be a test or different integration
       return NextResponse.json({
         received: true,
         message: 'No PaymentIntent reference found - webhook acknowledged',
       });
     }
 
-    // Step 4: Retrieve the PaymentIntent and check idempotency
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
     if (paymentIntent.metadata?.stripe_payment_record_id) {
@@ -185,8 +324,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Step 5: Double-check with HitPay API (defense in depth)
-    // This ensures we're recording based on actual HitPay status, not just webhook data
+    // Double-check with HitPay API (defense in depth)
     const hitpayStatus = await getHitPayPaymentStatus(payload.payment_request_id);
 
     if (hitpayStatus.status !== 'completed') {
@@ -200,48 +338,49 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Step 6: Create PaymentMethod and record the payment in Stripe
-    console.log('[HitPay Webhook] Recording payment in Stripe...');
+    // Resolve CPM type from HitPay payment data
+    const paymentType = hitpayStatus.payments?.[0]?.payment_type;
+    const cpmTypeId = resolveCpmTypeIdFromPaymentType(paymentType);
 
     const paymentMethod = await stripe.paymentMethods.create({
       type: 'custom',
-      custom: {
-        type: CPM_TYPE_ID,
-      },
+      custom: { type: cpmTypeId },
     });
 
-    const paymentRecord = await stripe.paymentRecords.reportPayment({
-      amount_requested: {
-        value: paymentIntent.amount,
-        currency: paymentIntent.currency,
-      },
-      payment_method_details: {
-        payment_method: paymentMethod.id,
-      },
-      processor_details: {
-        type: 'custom',
-        custom: {
-          payment_reference: payload.payment_request_id,
+    const paymentRecord = await stripe.paymentRecords.reportPayment(
+      {
+        amount_requested: {
+          value: paymentIntent.amount,
+          currency: paymentIntent.currency,
+        },
+        payment_method_details: {
+          payment_method: paymentMethod.id,
+        },
+        processor_details: {
+          type: 'custom',
+          custom: {
+            payment_reference: payload.payment_request_id,
+          },
+        },
+        initiated_at: Math.floor(Date.now() / 1000),
+        customer_presence: 'on_session',
+        outcome: 'guaranteed',
+        guaranteed: {
+          guaranteed_at: Math.floor(Date.now() / 1000),
+        },
+        metadata: {
+          hitpay_payment_id: payload.payment_id,
+          hitpay_request_id: payload.payment_request_id,
+          stripe_payment_intent_id: paymentIntentId,
+          stripe_payment_method_id: paymentMethod.id,
+          recorded_via: 'webhook',
         },
       },
-      initiated_at: Math.floor(Date.now() / 1000),
-      customer_presence: 'on_session',
-      outcome: 'guaranteed',
-      guaranteed: {
-        guaranteed_at: Math.floor(Date.now() / 1000),
-      },
-      metadata: {
-        hitpay_payment_id: payload.payment_id,
-        hitpay_request_id: payload.payment_request_id,
-        stripe_payment_intent_id: paymentIntentId,
-        stripe_payment_method_id: paymentMethod.id,
-        recorded_via: 'webhook',
-      },
-    });
+      { idempotencyKey: `prec-${payload.payment_request_id}` }
+    );
 
     console.log('[HitPay Webhook] Payment record created:', paymentRecord.id);
 
-    // Step 7: Update PaymentIntent metadata
     await stripe.paymentIntents.update(paymentIntentId, {
       metadata: {
         external_payment_provider: 'hitpay',
@@ -253,7 +392,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    console.log('[HitPay Webhook] Successfully processed payment');
+    console.log('[HitPay Webhook] Successfully processed payment (old format)');
 
     return NextResponse.json({
       received: true,
@@ -263,9 +402,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[HitPay Webhook] Error:', error);
 
-    // IMPORTANT: Return 200 to prevent HitPay from retrying
-    // Log the error for investigation, but don't cause webhook retries
-    // If this is a transient error, polling will catch it; if permanent, we need to investigate
+    // Return 200 to prevent HitPay from retrying on transient errors
     return NextResponse.json({
       received: true,
       error: error instanceof Error ? error.message : 'Unknown error',

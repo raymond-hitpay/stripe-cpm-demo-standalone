@@ -344,6 +344,39 @@ export function verifyHitPayJsonWebhook(
   return computedHmac === signature;
 }
 
+/**
+ * Verifies the HMAC-SHA256 signature from the `Hitpay-Signature` header.
+ * Used by HitPay's new webhook format where the raw JSON body is signed.
+ *
+ * @param rawBody - The raw request body string (before JSON parsing)
+ * @param signature - The value of the `Hitpay-Signature` header
+ * @returns true if the signature is valid, false otherwise
+ */
+export function verifyHitPayHeaderSignature(rawBody: string, signature: string): boolean {
+  const salt = HITPAY_SALT;
+
+  if (!salt) {
+    console.error(
+      `[HitPay] HITPAY_SALT_${hitpayEnv.toUpperCase()} not configured - cannot verify webhooks`
+    );
+    return false;
+  }
+
+  const computedHmac = crypto
+    .createHmac('sha256', salt)
+    .update(rawBody)
+    .digest('hex');
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(computedHmac, 'hex'),
+      Buffer.from(signature, 'hex')
+    );
+  } catch {
+    return false;
+  }
+}
+
 // ============================================================================
 // RECURRING BILLING APIs (for auto-charge subscriptions)
 // ============================================================================
