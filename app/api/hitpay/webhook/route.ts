@@ -30,7 +30,6 @@ import {
   getHitPayPaymentStatus,
 } from '@/lib/hitpay';
 import { stripe } from '@/lib/stripe';
-import { chargeInvoiceInternal } from '@/app/api/subscription/charge-invoice/route';
 import { CUSTOM_PAYMENT_METHODS, getOneTimeCpms } from '@/config/payment-methods';
 
 // Disable caching for webhooks
@@ -82,6 +81,13 @@ function resolveCpmTypeIdFromPaymentType(paymentType: string | undefined): strin
 async function handleRecurringChargeWebhook(payload: Record<string, unknown>) {
   const chargeId = payload.id as string;
   const status = (payload.status as string)?.toLowerCase();
+
+  console.log('[HitPay Webhook] charge.created payload:', {
+    id: chargeId,
+    channel: payload.channel,
+    status: payload.status,
+    hasRelatable: !!payload.relatable,
+  });
 
   if (status !== 'succeeded') {
     console.log('[HitPay Webhook] Recurring charge non-succeeded:', status);
@@ -144,15 +150,16 @@ async function handleRecurringChargeWebhook(payload: Record<string, unknown>) {
   // Retrieve invoice
   const invoice = await stripe.invoices.retrieve(invoiceId);
 
-  // Idempotency: if already paid and NOT in pending state, skip entirely
-  if (invoice.status === 'paid' ||
-      (invoice.metadata?.hitpay_payment_id && !invoice.metadata?.hitpay_charge_pending)) {
+  // Idempotency: only skip if we already created a payment record for this charge.
+  // If the invoice is already paid (via method_attached) but no payment record exists yet,
+  // fall through so we still create the Payment Record with the real HitPay charge ID.
+  if (invoice.metadata?.stripe_payment_record_id) {
     if (!invoice.metadata?.hitpay_webhook_confirmed) {
       await stripe.invoices.update(invoiceId, {
         metadata: { ...invoice.metadata, hitpay_webhook_confirmed: 'true' },
       });
     }
-    console.log('[HitPay Webhook] charge.created: invoice already processed:', invoiceId);
+    console.log('[HitPay Webhook] charge.created: payment record already exists:', invoice.metadata.stripe_payment_record_id);
     return { received: true, message: 'Already processed' };
   }
 
@@ -424,29 +431,104 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'Missing redirect_url' }, { status: 400 });
         }
 
+        const recurringBillingId = recurringBilling.id as string | undefined;
+
         let invoiceId: string | null = null;
+        let stripeCustomerId: string | null = null;
         try {
-          invoiceId = new URL(redirectUrl).searchParams.get('invoice_id');
+          const urlParams = new URL(redirectUrl).searchParams;
+          invoiceId = urlParams.get('invoice_id');
+          stripeCustomerId = urlParams.get('customer_id');
         } catch {
-          console.error('[HitPay Webhook] Failed to parse redirect_url:', redirectUrl);
-          return NextResponse.json({ error: 'Invalid redirect_url' }, { status: 400 });
+          console.warn('[HitPay Webhook] method_attached: invalid redirect_url:', redirectUrl);
         }
 
-        if (!invoiceId) {
-          console.error('[HitPay Webhook] No invoice_id in redirect_url:', redirectUrl);
-          return NextResponse.json({ error: 'Missing invoice_id in redirect_url' }, { status: 400 });
-        }
+        if (invoiceId && stripeCustomerId) {
+          // Retrieve invoice for amount/currency
+          const invoice = await stripe.invoices.retrieve(invoiceId);
 
-        console.log(`[HitPay Webhook] Charging invoice: ${invoiceId}`);
-        const result = await chargeInvoiceInternal(invoiceId, 'webhook');
+          // Get customer CPM type for Payment Record
+          let cpmTypeId: string | undefined;
+          try {
+            const customer = await stripe.customers.retrieve(stripeCustomerId) as Stripe.Customer;
+            cpmTypeId = customer.metadata?.hitpay_cpm_type_id || undefined;
+          } catch (err) {
+            console.warn('[HitPay Webhook] method_attached: could not retrieve customer:', err);
+          }
 
-        if (result.skipped) {
-          console.log(`[HitPay Webhook] Invoice already paid — skipped: ${invoiceId}`);
-        } else if (!result.success) {
-          console.error(`[HitPay Webhook] Failed to charge invoice ${invoiceId}: ${result.error}`);
-          return NextResponse.json({ received: true, warning: result.error });
+          let paymentRecordId: string | null = null;
+          let paymentMethodId: string | null = null;
+          let invoiceMarkedPaid = false;
+
+          if (cpmTypeId) {
+            try {
+              const paymentMethod = await stripe.paymentMethods.create({
+                type: 'custom',
+                custom: { type: cpmTypeId },
+              });
+              paymentMethodId = paymentMethod.id;
+              await stripe.paymentMethods.attach(paymentMethod.id, { customer: stripeCustomerId });
+
+              const paymentRecord = await stripe.paymentRecords.reportPayment(
+                {
+                  amount_requested: { value: invoice.amount_due, currency: invoice.currency },
+                  customer_details: { customer: stripeCustomerId },
+                  payment_method_details: { payment_method: paymentMethod.id },
+                  processor_details: {
+                    type: 'custom',
+                    custom: { payment_reference: recurringBillingId || '' },
+                  },
+                  initiated_at: Math.floor(Date.now() / 1000),
+                  customer_presence: 'off_session',
+                  outcome: 'guaranteed',
+                  guaranteed: { guaranteed_at: Math.floor(Date.now() / 1000) },
+                  metadata: {
+                    hitpay_recurring_billing_id: recurringBillingId || '',
+                    stripe_invoice_id: invoiceId,
+                    charged_via: 'method_attached_webhook',
+                  },
+                },
+                { idempotencyKey: `prec-billing-${recurringBillingId}` }
+              );
+              paymentRecordId = paymentRecord.id;
+
+              // Attach payment record to invoice (also marks it paid)
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (stripe.invoices as any).attachPayment(invoiceId, { payment_record: paymentRecord.id });
+                invoiceMarkedPaid = true;
+              } catch {
+                // Invoice may already be paid — record is still created
+              }
+            } catch (err) {
+              console.error('[HitPay Webhook] method_attached: payment record error:', err);
+            }
+          }
+
+          // Fallback: mark invoice paid if not yet done
+          if (!invoiceMarkedPaid) {
+            try {
+              await stripe.invoices.pay(invoiceId, { paid_out_of_band: true });
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (!msg.includes('already paid')) {
+                console.error('[HitPay Webhook] method_attached: error marking invoice paid:', err);
+              }
+            }
+          }
+
+          await stripe.invoices.update(invoiceId, {
+            metadata: {
+              hitpay_payment_id: recurringBillingId || '',
+              stripe_payment_record_id: paymentRecordId || '',
+              stripe_payment_method_id: paymentMethodId || '',
+              charged_via: 'method_attached_webhook',
+            },
+          });
+
+          console.log(`[HitPay Webhook] method_attached: processed — invoice=${invoiceId}, record=${paymentRecordId}`);
         } else {
-          console.log(`[HitPay Webhook] Invoice charged: ${invoiceId}, hitpay_payment_id=${result.hitpayPaymentId}`);
+          console.warn(`[HitPay Webhook] method_attached: missing invoice_id or customer_id in redirect_url — billing_id=${recurringBillingId}`);
         }
 
         return NextResponse.json({ received: true });

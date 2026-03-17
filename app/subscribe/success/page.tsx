@@ -6,9 +6,32 @@
  */
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+
+interface SubscriptionDetails {
+  productName: string | null;
+  productDescription: string | null;
+  productImage: string | null;
+  amount: number | null;
+  currency: string | null;
+  interval: string | null;
+  intervalCount: number | null;
+  status: string;
+  currentPeriodEnd: number;
+}
+
+function formatPrice(amount: number, currency: string, interval: string, intervalCount: number) {
+  const formatted = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+    minimumFractionDigits: 2,
+  }).format(amount / 100);
+
+  const intervalLabel = intervalCount === 1 ? interval : `${intervalCount} ${interval}s`;
+  return `${formatted} / ${intervalLabel}`;
+}
 
 function SubscriptionSuccessContent() {
   const searchParams = useSearchParams();
@@ -19,6 +42,19 @@ function SubscriptionSuccessContent() {
   // HitPay CPM payment params
   const method = searchParams.get('method');
   const hitpayId = searchParams.get('hitpay_id');
+
+  const [subscriptionDetails, setSubscriptionDetails] = useState<SubscriptionDetails | null>(null);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+
+  useEffect(() => {
+    if (!subscriptionId) return;
+    setIsLoadingDetails(true);
+    fetch(`/api/subscription/details?subscriptionId=${subscriptionId}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => setSubscriptionDetails(data))
+      .catch(() => setSubscriptionDetails(null))
+      .finally(() => setIsLoadingDetails(false));
+  }, [subscriptionId]);
 
   // Check if payment was successful
   // Success if: Stripe redirect succeeded OR HitPay CPM payment completed
@@ -93,6 +129,55 @@ function SubscriptionSuccessContent() {
           Thank you for subscribing! Your subscription is now active and you&apos;ll
           be billed automatically each billing cycle.
         </p>
+
+        {/* Subscription details card */}
+        {isLoadingDetails && (
+          <div className="mt-6 border rounded-lg p-4 animate-pulse">
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 bg-gray-200 rounded-lg flex-shrink-0"></div>
+              <div className="flex-1">
+                <div className="h-5 bg-gray-200 rounded w-2/3 mb-2"></div>
+                <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+              </div>
+            </div>
+          </div>
+        )}
+        {!isLoadingDetails && subscriptionDetails && (
+          <div className="mt-6 border border-gray-200 rounded-lg p-4 text-left">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Your Subscription</h3>
+            <div className="flex items-center gap-4">
+              {subscriptionDetails.productImage && (
+                <img
+                  src={subscriptionDetails.productImage}
+                  alt={subscriptionDetails.productName ?? ''}
+                  className="w-16 h-16 rounded-lg object-cover flex-shrink-0"
+                />
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-gray-900 truncate">
+                  {subscriptionDetails.productName ?? 'Subscription'}
+                </p>
+                {subscriptionDetails.amount != null &&
+                  subscriptionDetails.currency &&
+                  subscriptionDetails.interval && (
+                    <p className="mt-0.5 text-sm text-indigo-600 font-medium">
+                      {formatPrice(
+                        subscriptionDetails.amount,
+                        subscriptionDetails.currency,
+                        subscriptionDetails.interval,
+                        subscriptionDetails.intervalCount ?? 1,
+                      )}
+                    </p>
+                  )}
+                {subscriptionDetails.productDescription && (
+                  <p className="mt-1 text-xs text-gray-500 line-clamp-2">
+                    {subscriptionDetails.productDescription}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 bg-indigo-50 border border-indigo-200 rounded-lg p-4">
           <h3 className="font-medium text-indigo-900">What&apos;s Next?</h3>

@@ -16,7 +16,7 @@
 'use client';
 
 import { useEffect, useState, useRef, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 // =============================================================================
@@ -25,6 +25,7 @@ import Link from 'next/link';
 
 function SetupContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
 
   // Get params from URL
   const subscriptionId = searchParams.get('subscription_id');
@@ -68,9 +69,15 @@ function SetupContent() {
           );
         }
 
-        // Authorization received — the HitPay webhook (recurring_billing.method_attached)
-        // will charge the first invoice. This page just acknowledges the redirect.
+        // Authorization received — redirect to success page.
+        // The HitPay webhook (recurring_billing.method_attached) will charge the
+        // first invoice in the background.
         setStep('success');
+        const params = new URLSearchParams({
+          subscription_id: subscriptionId,
+          method: 'auto_charge',
+        });
+        router.push(`/subscribe/success?${params.toString()}`);
       } catch (err) {
         console.error('[Setup] Error:', err);
         setStep('error');
@@ -79,7 +86,7 @@ function SetupContent() {
     };
 
     processSetup();
-  }, [subscriptionId, customerId, invoiceId, reference, status]);
+  }, [subscriptionId, customerId, invoiceId, reference, status, router]);
 
   return (
     <div className="max-w-lg mx-auto py-16">
@@ -107,7 +114,7 @@ function SetupContent() {
               Payment method authorized!
             </h2>
             <p className="mt-2 text-gray-600">
-              Close this tab and return to the previous page.
+              Redirecting to your subscription confirmation...
             </p>
           </div>
         )}
