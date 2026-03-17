@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
       webhook: webhookUrl.toString(),
       redirect_url: redirectUrl.toString(),
       reference: subscriptionId,
-      generate_qr: true,
+      generate_embed: true,
     });
 
     console.log(`[HitPay Recurring] Created session: ${session.id}`);

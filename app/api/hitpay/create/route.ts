@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
       amount: amountInDollars,
       currency: currency.toLowerCase(),
       payment_methods: [hitpayPaymentMethod],
-      generate_qr: true,
+      generate_embed: true,
       purpose: 'TechStore Purchase',
       reference_number: referenceNumber || `ORDER-${Date.now()}`,
     });

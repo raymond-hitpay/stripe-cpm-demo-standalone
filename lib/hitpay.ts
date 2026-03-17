@@ -46,8 +46,8 @@ export interface HitPayPaymentRequest {
   currency: string;
   /** Payment methods to enable (e.g., ["paynow_online"]) */
   payment_methods: string[];
-  /** Whether to generate a QR code for the payment */
-  generate_qr: boolean;
+  /** Whether to generate an embedded payment for the payment */
+  generate_embed: boolean;
   /** Customer name (optional) */
   name?: string;
   /** Customer email (optional) */
@@ -119,7 +119,7 @@ export interface HitPayPaymentResponse {
   expiry_date: string | null;
   created_at: string;
   updated_at: string;
-  /** QR code data (only present if generate_qr was true) */
+  /** QR code data (only present if generate_embed was true) */
   qr_code_data?: {
     /** Base64 encoded QR code image or raw QR data */
     qr_code: string;
@@ -161,7 +161,7 @@ export interface HitPayPaymentResponse {
  *   amount: "10.00",
  *   currency: "sgd",
  *   payment_methods: ["paynow_online"],
- *   generate_qr: true,
+ *   generate_embed: true,
  *   purpose: "Order #123",
  *   reference_number: "pi_xxx", // Link to Stripe PaymentIntent
  * });
@@ -410,8 +410,8 @@ export interface HitPayRecurringBillingRequest {
   redirect_url?: string;
   /** Your reference for this recurring billing (e.g., Stripe subscription ID) */
   reference?: string;
-  /** Request a QR code or direct link in the response (for app-based methods) */
-  generate_qr?: boolean;
+  /** Request an embedded payment or direct link in the response (for app-based methods) */
+  generate_embed?: boolean;
 }
 
 /**
@@ -456,7 +456,7 @@ export interface HitPayRecurringBillingResponse {
   created_at: string;
   /** Last update timestamp */
   updated_at: string;
-  /** QR code data if generate_qr was true and method supports QR */
+  /** QR code data if generate_embed was true and method supports QR */
   qr_code_data?: {
     qr_code: string;
     qr_code_expiry: string | null;
@@ -538,7 +538,7 @@ export async function createRecurringBilling(
   if (data.webhook) formData.append('webhook', data.webhook);
   if (data.redirect_url) formData.append('redirect_url', data.redirect_url);
   if (data.reference) formData.append('reference', data.reference);
-  if (data.generate_qr) formData.append('generate_qr', 'true');
+  if (data.generate_embed) formData.append('generate_embed', 'true');
 
   const response = await fetch(`${HITPAY_API_BASE}/recurring-billing`, {
     method: 'POST',
