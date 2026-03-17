@@ -5,12 +5,13 @@
  * their payment method for auto-charge subscriptions.
  *
  * Flow:
- * 1. Parse URL parameters (subscription_id, customer_id, invoice_id)
- * 2. Get the HitPay recurring billing ID from the redirect
- * 3. Verify the payment method was saved
- * 4. Store the recurring billing ID in Stripe customer metadata
- * 5. Charge the first invoice
- * 6. Redirect to success page
+ * 1. Parse URL parameters from HitPay redirect
+ * 2. Verify authorization was successful (status=active)
+ * 3. Show "close this tab" message — the HitPay webhook handles charging the first invoice
+ *
+ * Note: The first invoice is charged by the HitPay `recurring_billing.method_attached`
+ * webhook (app/api/hitpay/webhook/route.ts). This page does NOT charge the invoice
+ * to avoid double-charging.
  */
 'use client';
 
@@ -34,14 +35,8 @@ function SetupContent() {
   const status = searchParams.get('status');
 
   // State
-  const [step, setStep] = useState<'verifying' | 'waiting' | 'success' | 'error'>('verifying');
+  const [step, setStep] = useState<'verifying' | 'success' | 'error'>('verifying');
   const [error, setError] = useState<string | null>(null);
-  const [chargeResult, setChargeResult] = useState<{
-    paymentId: string;
-    amount: number;
-    currency: string;
-    pending?: boolean;
-  } | null>(null);
 
   // Prevent duplicate processing
   const hasProcessed = useRef(false);
@@ -73,33 +68,9 @@ function SetupContent() {
           );
         }
 
-        setStep('waiting');
-
-        // Directly charge the invoice — more reliable than waiting for webhook
-        // chargeInvoiceInternal is idempotent: if webhook already charged it, it skips
-        const res = await fetch('/api/subscription/charge-invoice', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ invoiceId }),
-        });
-        const data = await res.json();
-
-        if (!res.ok || data.error) {
-          throw new Error(data.error || 'Failed to charge invoice');
-        }
-
-        setChargeResult({
-          paymentId: data.hitpayPaymentId || '',
-          amount: data.amount || 0,
-          currency: data.currency || 'SGD',
-          pending: !!data.pending,
-        });
-        // pending: charge was initiated but not yet confirmed by HitPay webhook
-        // success: charge confirmed synchronously
-        // Both cases: show success UI and let the original tab's polling handle redirect.
+        // Authorization received — the HitPay webhook (recurring_billing.method_attached)
+        // will charge the first invoice. This page just acknowledges the redirect.
         setStep('success');
-        // Do NOT redirect — the original tab owns the success UX.
-        // Just show "close this tab" message.
       } catch (err) {
         console.error('[Setup] Error:', err);
         setStep('error');
@@ -109,13 +80,6 @@ function SetupContent() {
 
     processSetup();
   }, [subscriptionId, customerId, invoiceId, reference, status]);
-
-  const formatPrice = (price: number, currency: string = 'SGD') => {
-    return new Intl.NumberFormat('en-SG', {
-      style: 'currency',
-      currency: currency.toUpperCase(),
-    }).format(price);
-  };
 
   return (
     <div className="max-w-lg mx-auto py-16">
@@ -132,18 +96,6 @@ function SetupContent() {
           </div>
         )}
 
-        {step === 'waiting' && (
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
-            <h2 className="mt-6 text-xl font-semibold text-gray-900">
-              Waiting for Payment Confirmation
-            </h2>
-            <p className="mt-2 text-gray-600">
-              Your payment is being processed. This usually takes a few seconds.
-            </p>
-          </div>
-        )}
-
         {step === 'success' && (
           <div className="text-center">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
@@ -152,12 +104,10 @@ function SetupContent() {
               </svg>
             </div>
             <h2 className="mt-6 text-xl font-semibold text-gray-900">
-              {chargeResult?.pending ? 'Payment initiated!' : 'Payment complete!'}
+              Payment method authorized!
             </h2>
             <p className="mt-2 text-gray-600">
-              {chargeResult?.pending
-                ? 'Payment initiated — you can close this tab. The previous page will update when confirmed.'
-                : 'You can close this tab and return to the previous page.'}
+              Close this tab and return to the previous page.
             </p>
           </div>
         )}
@@ -174,36 +124,6 @@ function SetupContent() {
             </h2>
             <p className="mt-2 text-red-600">{error}</p>
             <div className="mt-6 space-y-3">
-              {invoiceId && (
-                <button
-                  onClick={async () => {
-                    setStep('waiting');
-                    setError(null);
-                    try {
-                      const res = await fetch('/api/subscription/charge-invoice', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ invoiceId }),
-                      });
-                      const data = await res.json();
-                      if (!res.ok || data.error) throw new Error(data.error || 'Failed to charge invoice');
-                      setChargeResult({
-                        paymentId: data.hitpayPaymentId || '',
-                        amount: data.amount || 0,
-                        currency: data.currency || 'SGD',
-                      });
-                      setStep('success');
-                      // Do NOT redirect — original tab owns success UX.
-                    } catch (retryErr) {
-                      setStep('error');
-                      setError(retryErr instanceof Error ? retryErr.message : 'Retry failed');
-                    }
-                  }}
-                  className="block w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium text-center"
-                >
-                  Retry Payment
-                </button>
-              )}
               <Link
                 href="/subscriptions"
                 className="block w-full bg-gray-100 text-gray-700 py-3 rounded-lg hover:bg-gray-200 transition-colors font-medium text-center"
@@ -234,7 +154,6 @@ function SetupContent() {
                 reference,
                 status,
                 step,
-                chargeResult,
               },
               null,
               2

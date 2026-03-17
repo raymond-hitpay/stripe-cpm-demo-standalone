@@ -105,12 +105,12 @@ export function AutoChargePaymentElement({
         const res = await fetch(`/api/subscription/invoice-status?invoiceId=${invoiceIdToCheck}`);
         const data = await res.json();
 
-        if (data.paid) {
+        if (data.paid && data.hitpayPaymentId) {
           console.log('[AutoCharge] Invoice paid — redirecting original tab to success');
           const params = new URLSearchParams({
             subscription_id: subscriptionId,
             method: 'auto_charge',
-            hitpay_id: data.hitpayPaymentId || '',
+            hitpay_id: data.hitpayPaymentId,
           });
           router.push(`/subscribe/success?${params.toString()}`);
           return;

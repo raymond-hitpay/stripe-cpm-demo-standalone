@@ -22,7 +22,7 @@ function SubscriptionSuccessContent() {
 
   // Check if payment was successful
   // Success if: Stripe redirect succeeded OR HitPay CPM payment completed
-  const isSuccessful = redirectStatus === 'succeeded' || (method && hitpayId);
+  const isSuccessful = redirectStatus === 'succeeded' || method === 'auto_charge' || (method && hitpayId);
 
   if (!isSuccessful) {
     return (

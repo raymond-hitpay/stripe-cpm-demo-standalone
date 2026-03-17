@@ -46,8 +46,8 @@ export interface HitPayPaymentRequest {
   currency: string;
   /** Payment methods to enable (e.g., ["paynow_online"]) */
   payment_methods: string[];
-  /** Whether to generate an embedded payment for the payment */
-  generate_embed: boolean;
+  /** Whether to generate a QR code for the payment */
+  generate_qr: boolean;
   /** Customer name (optional) */
   name?: string;
   /** Customer email (optional) */
