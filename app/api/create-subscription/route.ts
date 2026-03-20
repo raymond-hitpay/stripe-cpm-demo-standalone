@@ -13,8 +13,9 @@
  *    - First payment via HitPay recurring billing to save payment method
  *    - Returns subscription details for HitPay setup flow
  *
- * Note: This uses a standard Stripe client (not the clover beta) because
- * the clover beta API doesn't properly create PaymentIntents for subscriptions.
+ * Note: Uses the standard Stripe client (not the clover beta) so that invoice
+ * finalization properly creates and links a PaymentIntent. The clover beta is
+ * only needed for paymentRecords.reportPayment(), not used here.
  *
  * @example Request (out_of_band)
  * ```json
@@ -37,8 +38,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { STRIPE_RECURRING_METHODS } from '@/config/payment-methods';
-import { stripe as stripeSubscriptions } from '@/lib/stripe';
+import { stripeStandard as stripeSubscriptions } from '@/lib/stripe';
 
 export type BillingType = 'out_of_band' | 'charge_automatically';
 
@@ -133,7 +133,7 @@ export async function POST(request: NextRequest) {
     const subscriptionParams: Stripe.SubscriptionCreateParams = {
       customer: customer.id,
       items: [{ price: priceId }],
-      expand: ['latest_invoice', 'pending_setup_intent'],
+      expand: ['latest_invoice', 'latest_invoice.payment_intent', 'pending_setup_intent'],
       metadata: {
         integration: 'cpm-demo',
         billing_type: billingType,
@@ -149,6 +149,7 @@ export async function POST(request: NextRequest) {
       subscriptionParams.payment_behavior = 'default_incomplete';
       subscriptionParams.payment_settings = {
         save_default_payment_method: 'on_subscription',
+        payment_method_types: ['card'],  // Ensure card is available in invoice PI
       };
     } else {
       // Out-of-band: User pays each invoice manually via CPM
@@ -172,39 +173,79 @@ export async function POST(request: NextRequest) {
       // and then charge the first invoice
       console.log(`[Subscription] Created auto-charge: ${subscription.id}`);
 
-      // Get invoice amount for the HitPay setup
-      const invoiceAmount = invoice?.amount_due ? invoice.amount_due / 100 : 0;
-      const invoiceCurrency = invoice?.currency || 'sgd';
+      const invoiceIdOrObj = subscription.latest_invoice as Stripe.Invoice | string | null;
+      const latestInvoiceId = typeof invoiceIdOrObj === 'string' ? invoiceIdOrObj : invoiceIdOrObj?.id;
 
-      // Create a UI PaymentIntent for auto-charge CPM selection in Payment Element
-      // This PI is only for displaying the Payment Element - actual payment is via HitPay
-      // Only show recurring-capable Stripe native methods (hides PayNow, Alipay, etc.)
-      const uiPaymentIntent = await stripeSubscriptions.paymentIntents.create({
-        amount: invoice?.amount_due || Math.round(invoiceAmount * 100),
-        currency: invoiceCurrency,
-        customer: customer.id,
-        payment_method_types: STRIPE_RECURRING_METHODS as any,
-        metadata: {
-          subscription_id: subscription.id,
-          invoice_id: invoice?.id || '',
-          purpose: 'auto_charge_cpm_selection_ui',
-          billing_type: 'charge_automatically',
-        },
-      });
+      let invoiceClientSecret: string | null = null;
+      let resolvedInvoice: Stripe.Invoice | null = null;
 
-      console.log(`[Subscription] Created auto-charge with UI PI: ${uiPaymentIntent.id}`);
+      if (latestInvoiceId) {
+        // Fetch invoice directly (nested expansion on subscription.create can silently fail)
+        console.log(`[Subscription] Fetching invoice: ${latestInvoiceId}`);
+        let fetchedInvoice = await stripeSubscriptions.invoices.retrieve(latestInvoiceId, {
+          expand: ['payment_intent'],
+        });
+
+        // For charge_automatically + default_incomplete with no existing payment method,
+        // Stripe keeps the invoice in draft state (no PI yet). Finalize it to create the PI.
+        // Note: with payment_behavior: 'default_incomplete', finalization does NOT auto-charge —
+        // it only creates a PI in requires_payment_method state.
+        if (fetchedInvoice.status === 'draft') {
+          console.log(`[Subscription] Invoice is draft — finalizing to create PI: ${latestInvoiceId}`);
+          fetchedInvoice = await stripeSubscriptions.invoices.finalizeInvoice(latestInvoiceId, {
+            expand: ['payment_intent'],
+          });
+        }
+
+        resolvedInvoice = fetchedInvoice;
+        console.log(`[Subscription] Invoice status: ${fetchedInvoice.status}, PI type: ${typeof fetchedInvoice.payment_intent}`);
+
+        const invoicePI = fetchedInvoice.payment_intent;
+        let invoicePIObj: Stripe.PaymentIntent | null = null;
+
+        if (typeof invoicePI === 'string') {
+          // Expansion returned string ID — retrieve the full PI object
+          console.log(`[Subscription] PI expansion returned string ID, fetching: ${invoicePI}`);
+          invoicePIObj = await stripeSubscriptions.paymentIntents.retrieve(invoicePI);
+        } else {
+          invoicePIObj = invoicePI as Stripe.PaymentIntent | null;
+        }
+
+        if (invoicePIObj?.client_secret) {
+          invoiceClientSecret = invoicePIObj.client_secret;
+          console.log(`[Subscription] Using invoice PI: ${invoicePIObj.id} (invoice: ${fetchedInvoice.status})`);
+        } else {
+          console.error(`[Subscription] PI unavailable — type: ${typeof invoicePI}, invoice status: ${fetchedInvoice.status}`);
+        }
+      }
+
+      if (!invoiceClientSecret) {
+        console.error('[Subscription] Invoice PI unavailable:', {
+          subscriptionId: subscription.id,
+          latestInvoiceId,
+          invoiceStatus: resolvedInvoice?.status,
+        });
+        return NextResponse.json(
+          { error: 'Failed to retrieve payment intent for invoice. Please try again.' },
+          { status: 500 }
+        );
+      }
+
+      // Calculate amount/currency from resolved invoice (after fetch/finalization)
+      const invoiceAmount = resolvedInvoice?.amount_due ? resolvedInvoice.amount_due / 100 : 0;
+      const invoiceCurrency = resolvedInvoice?.currency || 'sgd';
 
       return NextResponse.json({
         subscriptionId: subscription.id,
         customerId: customer.id,
         customerEmail: email || customer.email,
         customerName: name || customer.name,
-        invoiceId: invoice?.id,
+        invoiceId: resolvedInvoice?.id || latestInvoiceId,
         invoiceAmount,
         invoiceCurrency,
-        clientSecret: uiPaymentIntent.client_secret, // For Payment Element CPM selection
+        clientSecret: invoiceClientSecret,
         billingType: 'charge_automatically',
-        type: 'hitpay_setup', // Indicates client should start HitPay flow after CPM selection
+        type: 'hitpay_setup',
       });
     }
 

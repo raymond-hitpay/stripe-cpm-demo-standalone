@@ -618,7 +618,7 @@ function SubscribeContent() {
                         id: pm.id,
                         options: { type: 'static' as const },
                       })),
-                      paymentMethodOrder: getAutoChargeCpmTypeIds(),
+                      paymentMethodOrder: ['card', ...getAutoChargeCpmTypeIds()],
                     } as any}
                     key={`auto-charge-${subscriptionId}`}
                   >

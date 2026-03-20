@@ -9,10 +9,12 @@
  *
  * Flow:
  * 1. Get invoice from Stripe
- * 2. Get customer metadata (hitpay_recurring_billing_id, hitpay_cpm_type_id)
+ * 2. Get customer metadata (hitpay_recurring_billing_id)
  * 3. Charge via HitPay recurring billing API
- * 4. Record payment via Stripe Payment Records API
- * 5. Mark invoice as paid (out of band)
+ * 4. For both 'succeeded' and 'pending': create Payment Record + mark invoice paid immediately.
+ *    For 'pending': hitpay_charge_pending=true metadata indicates charge not yet confirmed.
+ *    The charge.created webhook has an idempotency guard (stripe_payment_record_id) so it
+ *    becomes a no-op if it fires after we've already handled the invoice.
  *
  * @example Request
  * ```json
@@ -36,6 +38,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { chargeRecurringBilling } from '@/lib/hitpay';
 import { stripe } from '@/lib/stripe';
+import { CUSTOM_PAYMENT_METHODS } from '@/config/payment-methods';
+import { markInvoicePaidWithFallback } from '@/lib/invoice-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -94,15 +98,17 @@ export async function chargeInvoiceInternal(
     };
   }
 
-  // Check idempotency - if hitpay_payment_id exists and charge is NOT pending, already processed
-  if (invoice.metadata?.hitpay_payment_id && !invoice.metadata?.hitpay_charge_pending) {
-    console.log(`${logPrefix} Invoice already has hitpay_payment_id, skipping: ${invoiceId}`);
+  // Idempotency: skip if charge already triggered and invoice handled
+  if (invoice.metadata?.hitpay_payment_id) {
+    console.log(`${logPrefix} Charge already triggered, skipping: ${invoiceId}`);
     return {
       success: true,
+      pending: invoice.metadata?.hitpay_charge_pending === 'true',
       invoiceId: invoice.id,
       invoiceStatus: invoice.status,
       hitpayPaymentId: invoice.metadata.hitpay_payment_id,
-      message: 'Invoice already processed via HitPay',
+      paymentRecordId: invoice.metadata.stripe_payment_record_id || null,
+      message: 'Charge already triggered — invoice already handled',
       skipped: true,
     };
   }
@@ -144,7 +150,6 @@ export async function chargeInvoiceInternal(
   }
 
   const recurringBillingId = customer.metadata?.hitpay_recurring_billing_id;
-  const cpmTypeId = customer.metadata?.hitpay_cpm_type_id;
   const originUrl = customer.metadata?.hitpay_origin_url || null;
 
   if (!recurringBillingId) {
@@ -175,33 +180,7 @@ export async function chargeInvoiceInternal(
       currency
     );
 
-    if (hitpayCharge.status === 'pending') {
-      // Charge is in progress — store the payment ID to prevent duplicate charges
-      // and return pending so the setup page can close gracefully.
-      // The charge.created webhook will record the payment and mark the invoice paid.
-      console.log(`${logPrefix} HitPay charge pending: ${hitpayCharge.payment_id}`);
-      await stripe.invoices.update(invoiceId, {
-        metadata: {
-          hitpay_payment_id: hitpayCharge.payment_id,
-          hitpay_charge_pending: 'true',
-          charged_at: new Date().toISOString(),
-          charged_via: source,
-        },
-      });
-      return {
-        success: true,
-        pending: true,
-        invoiceId: invoice.id,
-        invoiceStatus: invoice.status,
-        hitpayPaymentId: hitpayCharge.payment_id,
-        amount: amountToCharge,
-        currency,
-        originUrl,
-        message: 'HitPay charge initiated — waiting for webhook confirmation',
-      };
-    }
-
-    if (hitpayCharge.status !== 'succeeded') {
+    if (hitpayCharge.status !== 'succeeded' && hitpayCharge.status !== 'pending') {
       console.error(`${logPrefix} HitPay charge failed: ${hitpayCharge.status}`);
       return {
         success: false,
@@ -212,7 +191,7 @@ export async function chargeInvoiceInternal(
       };
     }
 
-    console.log(`${logPrefix} HitPay charge succeeded: ${hitpayCharge.payment_id}`);
+    console.log(`${logPrefix} HitPay charge initiated: ${hitpayCharge.payment_id} (${hitpayCharge.status})`);
   } catch (hitpayError) {
     console.error(`${logPrefix} HitPay error:`, hitpayError);
     return {
@@ -224,127 +203,94 @@ export async function chargeInvoiceInternal(
     };
   }
 
-  // Step 5: Record payment in Stripe via Payment Records API
+  // Step 5: Handle charge result — treat 'pending' same as 'succeeded'.
+  // For both: create Payment Record + mark invoice paid immediately.
+  // For 'pending': hitpay_charge_pending=true flags that confirmation is still outstanding.
+  // The charge.created webhook checks stripe_payment_record_id and becomes a no-op if already set.
+  const isPending = hitpayCharge.status === 'pending';
+
   let paymentRecordId: string | null = null;
   let paymentMethodId: string | null = null;
   let invoiceMarkedAsPaid = false;
 
-  if (cpmTypeId) {
-    try {
-      // Create PaymentMethod with custom type
-      const paymentMethod = await stripe.paymentMethods.create({
-        type: 'custom',
-        custom: {
-          type: cpmTypeId,
-        },
-      });
+  const resolvedCpmTypeId =
+    customer.metadata?.hitpay_cpm_type_id ||
+    CUSTOM_PAYMENT_METHODS.find((pm) => pm.chargeAutomatically)?.id;
 
-      paymentMethodId = paymentMethod.id;
-      console.log(`${logPrefix} Created PaymentMethod: ${paymentMethodId}`);
+  if (resolvedCpmTypeId) {
+    const paymentMethod = await stripe.paymentMethods.create({
+      type: 'custom',
+      custom: { type: resolvedCpmTypeId },
+    });
+    paymentMethodId = paymentMethod.id;
+    await stripe.paymentMethods.attach(paymentMethod.id, { customer: customer.id });
 
-      // Attach PaymentMethod to customer
-      await stripe.paymentMethods.attach(paymentMethod.id, {
-        customer: customer.id,
-      });
-      console.log(`${logPrefix} Attached PaymentMethod to customer: ${customer.id}`);
-
-      // Record the payment via Payment Records API
-      const paymentRecord = await stripe.paymentRecords.reportPayment({
-        amount_requested: {
-          value: invoice.amount_due,
-          currency: invoice.currency,
-        },
-        customer_details: {
-          customer: customer.id,
-        },
-        payment_method_details: {
-          payment_method: paymentMethod.id,
-        },
+    const paymentRecord = await stripe.paymentRecords.reportPayment(
+      {
+        amount_requested: { value: invoice.amount_due, currency: invoice.currency },
+        customer_details: { customer: customer.id },
+        payment_method_details: { payment_method: paymentMethod.id },
         processor_details: {
           type: 'custom',
-          custom: {
-            payment_reference: hitpayCharge.payment_id,
-          },
+          custom: { payment_reference: hitpayCharge.payment_id },
         },
         initiated_at: Math.floor(Date.now() / 1000),
-        customer_presence: 'off_session', // Auto-charge is off-session
+        customer_presence: 'off_session',
         outcome: 'guaranteed',
-        guaranteed: {
-          guaranteed_at: Math.floor(Date.now() / 1000),
-        },
+        guaranteed: { guaranteed_at: Math.floor(Date.now() / 1000) },
         metadata: {
-          hitpay_payment_id: hitpayCharge.payment_id,
+          hitpay_charge_id: hitpayCharge.payment_id,
           hitpay_recurring_billing_id: recurringBillingId,
           stripe_invoice_id: invoiceId,
-          subscription_id: invoice.subscription ? (invoice.subscription as Stripe.Subscription).id : '',
-          charged_via: source === 'webhook' ? 'stripe_webhook' : 'auto_charge',
+          charged_via: source,
+          charge_status: hitpayCharge.status,
         },
-      });
+      },
+      { idempotencyKey: `prec-charge-${hitpayCharge.payment_id}` }
+    );
+    paymentRecordId = paymentRecord.id;
 
-      paymentRecordId = paymentRecord.id;
-      console.log(`${logPrefix} Created Payment Record: ${paymentRecordId}`);
-
-      // Attach payment record to invoice - this marks invoice as paid & activates subscription
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (stripe.invoices as any).attachPayment(invoiceId, {
-        payment_record: paymentRecord.id,
-      });
-      console.log(`${logPrefix} Attached Payment Record to invoice: ${invoiceId}`);
-      invoiceMarkedAsPaid = true;
-    } catch (recordError) {
-      // Log but continue - will use fallback to mark invoice as paid
-      console.error(`${logPrefix} Payment record error (will use fallback):`, recordError);
-    }
+    const markResult = await markInvoicePaidWithFallback(invoiceId, paymentRecord.id, logPrefix);
+    invoiceMarkedAsPaid = markResult.paid;
   }
 
-  // Fallback: if invoice wasn't marked as paid via attachPayment (e.g. missing cpmTypeId or
-  // attachPayment threw), mark it paid_out_of_band so the subscription always activates
-  if (!invoiceMarkedAsPaid) {
-    try {
-      await stripe.invoices.pay(invoiceId, { paid_out_of_band: true });
-      console.log(`${logPrefix} Marked invoice as paid (fallback): ${invoiceId}`);
-    } catch (fallbackError) {
-      console.error(`${logPrefix} Fallback invoice pay error:`, fallbackError);
-    }
-  }
-
-  console.log(`${logPrefix} Payment recorded via Payment Records API`);
-
-  // Update invoice metadata
+  // Store IDs on invoice so webhook handler's idempotency guard skips re-processing
   await stripe.invoices.update(invoiceId, {
     metadata: {
       hitpay_payment_id: hitpayCharge.payment_id,
       hitpay_recurring_billing_id: recurringBillingId,
-      payment_method: 'hitpay_auto_charge',
-      payment_method_type_id: cpmTypeId || '',
       stripe_payment_record_id: paymentRecordId || '',
       stripe_payment_method_id: paymentMethodId || '',
+      hitpay_charge_pending: isPending ? 'true' : 'false',
       charged_at: new Date().toISOString(),
       charged_via: source,
     },
   });
 
-  // Get subscription status
-  const subscriptionId = invoice.subscription
-    ? (typeof invoice.subscription === 'string' ? invoice.subscription : (invoice.subscription as Stripe.Subscription).id)
-    : null;
-  const subscription = subscriptionId
-    ? await stripe.subscriptions.retrieve(subscriptionId)
-    : null;
+  // Verify actual invoice and subscription status
+  const verifiedInvoice = await stripe.invoices.retrieve(invoiceId, {
+    expand: ['subscription'],
+  }) as any;
+  const subscription = verifiedInvoice.subscription as Stripe.Subscription | null;
 
   return {
     success: true,
+    pending: isPending,
     invoiceId: invoice.id,
-    invoiceStatus: invoice.status,
-    subscriptionId,
-    subscriptionStatus: subscription?.status || 'unknown',
+    invoiceStatus: verifiedInvoice.status,
+    subscriptionId: subscription?.id,
+    subscriptionStatus: subscription?.status,
     hitpayPaymentId: hitpayCharge.payment_id,
     amount: amountToCharge,
     currency,
     paymentRecordId,
     paymentMethodId,
     originUrl,
-    message: 'Invoice charged and payment recorded successfully',
+    message: invoiceMarkedAsPaid
+      ? isPending
+        ? 'HitPay charge pending — Invoice marked as paid, webhook will confirm'
+        : 'HitPay charge succeeded — Invoice marked as paid'
+      : 'HitPay charge completed but invoice could not be marked as paid',
   };
 }
 

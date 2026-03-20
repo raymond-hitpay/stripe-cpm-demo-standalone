@@ -7,11 +7,8 @@
  * Flow:
  * 1. Parse URL parameters from HitPay redirect
  * 2. Verify authorization was successful (status=active)
- * 3. Show "close this tab" message — the HitPay webhook handles charging the first invoice
- *
- * Note: The first invoice is charged by the HitPay `recurring_billing.method_attached`
- * webhook (app/api/hitpay/webhook/route.ts). This page does NOT charge the invoice
- * to avoid double-charging.
+ * 3. Call POST /api/subscription/charge-invoice to charge the first invoice
+ * 4. Redirect to success page (charge.created webhook confirms payment asynchronously)
  */
 'use client';
 
@@ -31,12 +28,17 @@ function SetupContent() {
   const subscriptionId = searchParams.get('subscription_id');
   const customerId = searchParams.get('customer_id');
   const invoiceId = searchParams.get('invoice_id');
+  // Card payment params
+  const paymentType = searchParams.get('payment_type');
+  const redirectStatus = searchParams.get('redirect_status');
+  // Stripe appends payment_intent=pi_xxx to the redirect URL after confirmPayment()
+  const paymentIntentId = searchParams.get('payment_intent');
   // HitPay adds these params after redirect
   const reference = searchParams.get('reference'); // Our reference (subscription ID)
   const status = searchParams.get('status');
 
   // State
-  const [step, setStep] = useState<'verifying' | 'success' | 'error'>('verifying');
+  const [step, setStep] = useState<'verifying' | 'charging' | 'success' | 'error'>('verifying');
   const [error, setError] = useState<string | null>(null);
 
   // Prevent duplicate processing
@@ -58,6 +60,40 @@ function SetupContent() {
 
     const processSetup = async () => {
       try {
+        // Stripe card payment path
+        if (paymentType === 'stripe_card') {
+          console.log('[Setup] Processing Stripe card payment for subscription:', subscriptionId);
+          console.log('[Setup] redirect_status:', redirectStatus);
+
+          if (redirectStatus && redirectStatus !== 'succeeded') {
+            throw new Error('Card payment was not completed. Please try again.');
+          }
+
+          setStep('charging');
+          const res = await fetch('/api/subscription/complete-stripe-payment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ invoiceId, paymentIntentId }),
+          });
+
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Failed to activate subscription');
+          }
+
+          const cardResult = await res.json();
+          if (cardResult.invoiceStatus !== 'paid') {
+            console.warn('[Setup] Card payment: invoice not yet confirmed paid:', cardResult.invoiceStatus);
+          }
+          if (cardResult.subscriptionStatus && cardResult.subscriptionStatus !== 'active') {
+            console.warn('[Setup] Card payment: subscription not yet active:', cardResult.subscriptionStatus);
+          }
+
+          setStep('success');
+          router.push(`/subscribe/success?subscription_id=${subscriptionId}&method=stripe_card`);
+          return;
+        }
+
         console.log('[Setup] Processing HitPay redirect for subscription:', subscriptionId);
         console.log('[Setup] HitPay reference:', reference, 'status:', status);
 
@@ -69,9 +105,28 @@ function SetupContent() {
           );
         }
 
-        // Authorization received — redirect to success page.
-        // The HitPay webhook (recurring_billing.method_attached) will charge the
-        // first invoice in the background.
+        // Charge the first invoice now that the payment method is authorized
+        setStep('charging');
+        const chargeResponse = await fetch('/api/subscription/charge-invoice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId }),
+        });
+
+        if (!chargeResponse.ok) {
+          const err = await chargeResponse.json();
+          throw new Error(err.error || 'Failed to process payment');
+        }
+
+        const chargeResult = await chargeResponse.json();
+        if (chargeResult.invoiceStatus !== 'paid') {
+          console.warn('[Setup] HitPay charge: invoice not yet confirmed paid:', chargeResult.invoiceStatus);
+        }
+        if (chargeResult.subscriptionStatus && chargeResult.subscriptionStatus !== 'active') {
+          console.warn('[Setup] HitPay charge: subscription not yet active:', chargeResult.subscriptionStatus);
+        }
+
+        // Redirect to success (charge is async — charge.created webhook will confirm)
         setStep('success');
         const params = new URLSearchParams({
           subscription_id: subscriptionId,
@@ -86,19 +141,21 @@ function SetupContent() {
     };
 
     processSetup();
-  }, [subscriptionId, customerId, invoiceId, reference, status, router]);
+  }, [subscriptionId, customerId, invoiceId, paymentType, redirectStatus, paymentIntentId, reference, status, router]);
 
   return (
     <div className="max-w-lg mx-auto py-16">
       <div className="bg-white rounded-lg shadow-md p-8">
-        {step === 'verifying' && (
+        {(step === 'verifying' || step === 'charging') && (
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
             <h2 className="mt-6 text-xl font-semibold text-gray-900">
-              Verifying Payment Method
+              {step === 'charging' ? 'Processing payment...' : 'Verifying Payment Method'}
             </h2>
             <p className="mt-2 text-gray-600">
-              Please wait while we verify your payment authorization...
+              {step === 'charging'
+                ? 'Charging your first invoice, please wait...'
+                : 'Please wait while we verify your payment authorization...'}
             </p>
           </div>
         )}
@@ -158,6 +215,9 @@ function SetupContent() {
                 subscriptionId,
                 customerId,
                 invoiceId,
+                paymentType,
+                redirectStatus,
+                paymentIntentId,
                 reference,
                 status,
                 step,

@@ -36,7 +36,6 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-gray-900">Stripe CPM Demo</h1>
-            <p className="text-xs text-gray-500 hidden sm:block">Custom Payment Methods · HitPay Integration</p>
           </div>
           <div className="flex items-center gap-3">
             <CartIcon />

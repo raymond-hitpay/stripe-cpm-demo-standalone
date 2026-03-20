@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
+import { markInvoicePaidWithFallback } from '@/lib/invoice-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -159,15 +160,13 @@ export async function POST(request: NextRequest) {
         paymentRecordId = paymentRecord.id;
         console.log(`[Pay Invoice] Created Payment Record: ${paymentRecordId}`);
 
-        // Step 4: Attach Payment Record to invoice (this marks it as paid)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (stripe.invoices as any).attachPayment(invoiceId, {
-          payment_record: paymentRecord.id,
-        });
-        console.log(`[Pay Invoice] Attached Payment Record to invoice: ${invoiceId}`);
+        // Step 4: Mark invoice as paid with verification and fallback
+        const markResult = await markInvoicePaidWithFallback(invoiceId, paymentRecord.id, '[Pay Invoice]');
+        if (!markResult.paid) {
+          console.error('[Pay Invoice] Failed to mark invoice as paid after all attempts');
+        }
       } catch (recordError) {
         console.error('[Pay Invoice] Payment record error:', recordError);
-        // If Payment Records fails, fall back to paid_out_of_band
         console.log('[Pay Invoice] Falling back to paid_out_of_band');
         await stripe.invoices.pay(invoiceId, {
           paid_out_of_band: true,

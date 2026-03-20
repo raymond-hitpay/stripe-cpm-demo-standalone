@@ -141,7 +141,7 @@ export function AutoChargePaymentElement({
         const { error: confirmError } = await stripe.confirmPayment({
           elements,
           confirmParams: {
-            return_url: `${window.location.origin}/subscribe/success?subscription_id=${subscriptionId}`,
+            return_url: `${window.location.origin}/subscribe/setup?subscription_id=${subscriptionId}&customer_id=${customerId}&invoice_id=${invoiceId}&payment_type=stripe_card`,
           },
         });
 

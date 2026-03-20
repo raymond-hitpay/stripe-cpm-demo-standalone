@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^5.4.1",
@@ -25,6 +26,7 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
-    "@types/react-dom": "^19.2.3"
+    "@types/react-dom": "^19.2.3",
+    "vitest": "^4.1.0"
   }
 }
