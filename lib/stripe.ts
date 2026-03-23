@@ -3,15 +3,17 @@
  *
  * Two clients are exported:
  *
- * 1. `stripe` — Clover beta client for Payment Records API only
- *    (stripe.paymentRecords.reportPayment). Do NOT use for subscriptions,
- *    invoices, customers, or PaymentIntents — the beta API version can
- *    break invoice-PI linkage.
+ * 1. `stripe` — Clover beta client for ALL CPM-related operations:
+ *    paymentRecords.reportPayment, paymentMethods.create({ type: 'custom' }),
+ *    paymentMethods.attach, subscriptions.update (default_payment_method),
+ *    invoices.attachPayment, invoices.retrieve/update/pay, customers.retrieve.
+ *    Per Stripe docs, all third-party payment processing ops use the clover API version.
  *
- * 2. `stripeStandard` — Standard API client for everything else:
- *    subscriptions, invoices, customers, PaymentIntents.
+ * 2. `stripeStandard` — Standard API client for subscription/invoice CREATION
+ *    (create-subscription route) and non-CPM operations like complete-stripe-payment.
  *
  * @see https://docs.stripe.com/custom-payment-methods
+ * @see https://docs.stripe.com/billing/subscriptions/third-party-payment-processing
  * @see https://docs.stripe.com/api/payment-records
  */
 import Stripe from 'stripe';
@@ -42,8 +44,8 @@ function getStripeStandardClient() {
 }
 
 /**
- * Clover beta client — ONLY for stripe.paymentRecords.reportPayment().
- * Do not use for subscriptions, invoices, or PaymentIntents.
+ * Clover beta client — for ALL CPM-related operations (payment records,
+ * custom payment methods, invoices.attachPayment, etc.).
  */
 export const stripe = new Proxy({} as Stripe, {
   get(_target, prop) {
@@ -52,8 +54,8 @@ export const stripe = new Proxy({} as Stripe, {
 });
 
 /**
- * Standard Stripe client — for subscriptions, invoices, customers, PaymentIntents.
- * Uses the stable API version so invoice-PI linkage works correctly.
+ * Standard Stripe client — for subscription/invoice CREATION and non-CPM operations.
+ * Uses the stable API version.
  */
 export const stripeStandard = new Proxy({} as Stripe, {
   get(_target, prop) {

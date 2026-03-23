@@ -145,11 +145,13 @@ export async function POST(request: NextRequest) {
     if (isAutoCharge) {
       // Auto-charge: External processor (HitPay) will charge saved payment method
       // We use charge_automatically but mark first invoice as paid out-of-band after HitPay setup
+      // Per Stripe third-party payment processing docs: do NOT set payment_method_types
+      // for CPM auto-charge — it conflicts with external payment flow and prevents
+      // attachPayment from transitioning the subscription to active.
       subscriptionParams.collection_method = 'charge_automatically';
       subscriptionParams.payment_behavior = 'default_incomplete';
       subscriptionParams.payment_settings = {
         save_default_payment_method: 'on_subscription',
-        payment_method_types: ['card'],  // Ensure card is available in invoice PI
       };
     } else {
       // Out-of-band: User pays each invoice manually via CPM

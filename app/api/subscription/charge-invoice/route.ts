@@ -217,13 +217,30 @@ export async function chargeInvoiceInternal(
     customer.metadata?.hitpay_cpm_type_id ||
     CUSTOM_PAYMENT_METHODS.find((pm) => pm.chargeAutomatically)?.id;
 
+  console.log(`${logPrefix} resolvedCpmTypeId: ${resolvedCpmTypeId || 'NONE'} (from metadata: ${customer.metadata?.hitpay_cpm_type_id || 'not set'}, fallback: ${CUSTOM_PAYMENT_METHODS.find((pm) => pm.chargeAutomatically)?.id || 'none'})`);
+
   if (resolvedCpmTypeId) {
     const paymentMethod = await stripe.paymentMethods.create({
       type: 'custom',
       custom: { type: resolvedCpmTypeId },
+      metadata: {
+        hitpay_recurring_billing_id: recurringBillingId,
+        hitpay_payment_method: customer.metadata?.hitpay_payment_method || '',
+      },
     });
     paymentMethodId = paymentMethod.id;
     await stripe.paymentMethods.attach(paymentMethod.id, { customer: customer.id });
+
+    // Set as default payment method on the subscription (per Stripe third-party payment docs)
+    // This ensures renewal invoices can find the payment method via invoice.default_payment_method
+    const subscription = invoice.subscription as Stripe.Subscription | string | null;
+    const subscriptionId = typeof subscription === 'string' ? subscription : subscription?.id;
+    if (subscriptionId) {
+      await stripe.subscriptions.update(subscriptionId, {
+        default_payment_method: paymentMethod.id,
+      });
+      console.log(`${logPrefix} Set default payment method ${paymentMethod.id} on subscription ${subscriptionId}`);
+    }
 
     const paymentRecord = await stripe.paymentRecords.reportPayment(
       {
@@ -249,9 +266,18 @@ export async function chargeInvoiceInternal(
       { idempotencyKey: `prec-charge-${hitpayCharge.payment_id}` }
     );
     paymentRecordId = paymentRecord.id;
+    console.log(`${logPrefix} PaymentRecord created: ${paymentRecord.id}`);
+
+    // Log invoice state right before marking as paid
+    const preMarkInvoice = await stripe.invoices.retrieve(invoiceId, { expand: ['payment_intent'] }) as any;
+    const preMarkPI = preMarkInvoice.payment_intent;
+    console.log(`${logPrefix} Invoice state BEFORE markInvoicePaid: status=${preMarkInvoice.status}, PI=${preMarkPI?.id || 'none'}, PI_status=${preMarkPI?.status || 'n/a'}, PI_payment_method=${preMarkPI?.payment_method || 'none'}`);
 
     const markResult = await markInvoicePaidWithFallback(invoiceId, paymentRecord.id, logPrefix);
     invoiceMarkedAsPaid = markResult.paid;
+    console.log(`${logPrefix} markInvoicePaid result: paid=${markResult.paid}, invoiceStatus=${markResult.invoiceStatus}`);
+  } else {
+    console.error(`${logPrefix} NO resolvedCpmTypeId — skipping PaymentMethod/PaymentRecord/markInvoicePaid entirely!`);
   }
 
   // Store IDs on invoice so webhook handler's idempotency guard skips re-processing

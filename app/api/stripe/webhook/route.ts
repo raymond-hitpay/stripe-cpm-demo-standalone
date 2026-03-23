@@ -19,7 +19,7 @@
  * 1. Deploy your app to get a public URL
  * 2. Create webhook in Stripe Dashboard:
  *    - URL: https://yoursite.com/api/stripe/webhook
- *    - Events: invoice.payment_attempt_required
+ *    - Events: invoice.created, invoice.payment_attempt_required
  * 3. Copy webhook signing secret to STRIPE_WEBHOOK_SECRET
  * 4. Test with Stripe CLI: stripe trigger invoice.payment_attempt_required
  *
@@ -180,6 +180,30 @@ export async function POST(request: NextRequest) {
             message: 'Charge error - invoice remains open',
           });
         }
+      }
+
+      case 'invoice.created': {
+        // Auto-finalize draft renewal invoices for charge_automatically subscriptions.
+        // Without this, renewal invoices stay in 'draft' and payment_attempt_required never fires.
+        const createdInvoice = event.data.object as Stripe.Invoice;
+
+        if (createdInvoice.status !== 'draft') break;
+        if (createdInvoice.collection_method !== 'charge_automatically') break;
+        if (createdInvoice.billing_reason === 'subscription_create') break;
+        if (createdInvoice.amount_due <= 0) break;
+
+        console.log(`[Stripe Webhook] Auto-finalizing draft renewal invoice: ${createdInvoice.id}`);
+        try {
+          await stripe.invoices.finalizeInvoice(createdInvoice.id);
+          console.log(`[Stripe Webhook] Finalized invoice: ${createdInvoice.id}`);
+        } catch (finalizeErr) {
+          console.error(`[Stripe Webhook] Failed to finalize invoice ${createdInvoice.id}:`, finalizeErr);
+        }
+
+        return NextResponse.json({
+          received: true,
+          message: `Invoice ${createdInvoice.id} finalized`,
+        });
       }
 
       default:
