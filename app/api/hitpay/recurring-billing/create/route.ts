@@ -137,6 +137,31 @@ export async function POST(request: NextRequest) {
 
     console.log(`[HitPay Recurring] Stored recurring billing ID in customer: ${customerId}`);
 
+    // Create a custom PaymentMethod and attach to customer + subscription.
+    // This follows the Stripe reference pattern: the PM carries the processor
+    // agreement ID in its metadata, and renewal invoices inherit it via
+    // subscription.default_payment_method so the webhook can reuse it.
+    if (cpmTypeId) {
+      try {
+        const paymentMethodObj = await stripe.paymentMethods.create({
+          type: 'custom',
+          custom: { type: cpmTypeId },
+          metadata: {
+            hitpay_recurring_billing_id: session.id,
+            hitpay_payment_method: paymentMethod,
+          },
+        });
+        await stripe.paymentMethods.attach(paymentMethodObj.id, { customer: customerId });
+        await stripe.subscriptions.update(subscriptionId, {
+          default_payment_method: paymentMethodObj.id,
+        });
+        console.log(`[HitPay Recurring] Created PM ${paymentMethodObj.id} and set as default on subscription ${subscriptionId}`);
+      } catch (pmError) {
+        // Non-fatal: charge-invoice has a fallback that creates a PM if none exists
+        console.warn('[HitPay Recurring] Failed to create/attach PaymentMethod:', pmError);
+      }
+    }
+
     return NextResponse.json({
       recurringBillingId: session.id,
       redirectUrl: session.url,

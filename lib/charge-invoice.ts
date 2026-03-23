@@ -50,7 +50,7 @@ export async function chargeInvoiceInternal(
   // Step 1: Get the invoice
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const invoice = await stripe.invoices.retrieve(invoiceId, {
-    expand: ['customer', 'subscription'],
+    expand: ['customer', 'subscription', 'default_payment_method'],
   }) as any;
 
   // Check if already paid
@@ -180,48 +180,60 @@ export async function chargeInvoiceInternal(
   let paymentMethodId: string | null = null;
   let invoiceMarkedAsPaid = false;
 
-  const resolvedCpmTypeId =
-    customer.metadata?.hitpay_cpm_type_id ||
-    CUSTOM_PAYMENT_METHODS.find((pm) => pm.chargeAutomatically)?.id;
+  // Step 5a: Resolve PaymentMethod — prefer the one already on the invoice
+  // (set during setup), fall back to creating a new one for backward compat.
+  const existingPM = invoice.default_payment_method as Stripe.PaymentMethod | null;
 
-  console.log(`${logPrefix} resolvedCpmTypeId: ${resolvedCpmTypeId || 'NONE'} (from metadata: ${customer.metadata?.hitpay_cpm_type_id || 'not set'}, fallback: ${CUSTOM_PAYMENT_METHODS.find((pm) => pm.chargeAutomatically)?.id || 'none'})`);
+  if (existingPM && typeof existingPM === 'object') {
+    paymentMethodId = existingPM.id;
+    console.log(`${logPrefix} Reusing existing PM from invoice: ${existingPM.id}`);
+  } else {
+    // Fallback: create a new PM (backward compat for subscriptions set up before this change)
+    const resolvedCpmTypeId =
+      customer.metadata?.hitpay_cpm_type_id ||
+      CUSTOM_PAYMENT_METHODS.find((pm) => pm.chargeAutomatically)?.id;
 
-  if (resolvedCpmTypeId) {
-    const paymentMethod = await stripe.paymentMethods.create({
-      type: 'custom',
-      custom: { type: resolvedCpmTypeId },
-      metadata: {
-        hitpay_recurring_billing_id: recurringBillingId,
-        hitpay_payment_method: customer.metadata?.hitpay_payment_method || '',
-      },
-    });
-    paymentMethodId = paymentMethod.id;
-    await stripe.paymentMethods.attach(paymentMethod.id, { customer: customer.id });
+    console.log(`${logPrefix} No PM on invoice, creating new one. resolvedCpmTypeId: ${resolvedCpmTypeId || 'NONE'}`);
 
-    // Set as default payment method on the subscription (per Stripe third-party payment docs)
-    // This ensures renewal invoices can find the payment method via invoice.default_payment_method
-    const subscription = invoice.subscription as Stripe.Subscription | string | null;
-    const subscriptionId = typeof subscription === 'string' ? subscription : subscription?.id;
-    if (subscriptionId) {
-      await stripe.subscriptions.update(subscriptionId, {
-        default_payment_method: paymentMethod.id,
+    if (resolvedCpmTypeId) {
+      const newPM = await stripe.paymentMethods.create({
+        type: 'custom',
+        custom: { type: resolvedCpmTypeId },
+        metadata: {
+          hitpay_recurring_billing_id: recurringBillingId,
+          hitpay_payment_method: customer.metadata?.hitpay_payment_method || '',
+        },
       });
-      console.log(`${logPrefix} Set default payment method ${paymentMethod.id} on subscription ${subscriptionId}`);
-    }
+      paymentMethodId = newPM.id;
+      await stripe.paymentMethods.attach(newPM.id, { customer: customer.id });
 
+      const subscription = invoice.subscription as Stripe.Subscription | string | null;
+      const subscriptionId = typeof subscription === 'string' ? subscription : subscription?.id;
+      if (subscriptionId) {
+        await stripe.subscriptions.update(subscriptionId, {
+          default_payment_method: newPM.id,
+        });
+        console.log(`${logPrefix} Set default PM ${newPM.id} on subscription ${subscriptionId}`);
+      }
+    }
+  }
+
+  if (paymentMethodId) {
+    const now = Math.floor(Date.now() / 1000);
     const paymentRecord = await stripe.paymentRecords.reportPayment(
       {
         amount_requested: { value: invoice.amount_due, currency: invoice.currency },
         customer_details: { customer: customer.id },
-        payment_method_details: { payment_method: paymentMethod.id },
+        payment_method_details: { payment_method: paymentMethodId },
         processor_details: {
           type: 'custom',
           custom: { payment_reference: hitpayCharge.payment_id },
         },
-        initiated_at: Math.floor(Date.now() / 1000),
+        initiated_at: now,
         customer_presence: 'off_session',
-        outcome: 'guaranteed',
-        guaranteed: { guaranteed_at: Math.floor(Date.now() / 1000) },
+        outcome: isPending ? 'failed' : 'guaranteed',
+        guaranteed: !isPending ? { guaranteed_at: now } : undefined,
+        failed: isPending ? { failed_at: now } : undefined,
         metadata: {
           hitpay_charge_id: hitpayCharge.payment_id,
           hitpay_recurring_billing_id: recurringBillingId,
@@ -233,18 +245,13 @@ export async function chargeInvoiceInternal(
       { idempotencyKey: `prec-charge-${hitpayCharge.payment_id}` }
     );
     paymentRecordId = paymentRecord.id;
-    console.log(`${logPrefix} PaymentRecord created: ${paymentRecord.id}`);
-
-    // Log invoice state right before marking as paid
-    const preMarkInvoice = await stripe.invoices.retrieve(invoiceId, { expand: ['payment_intent'] }) as any;
-    const preMarkPI = preMarkInvoice.payment_intent;
-    console.log(`${logPrefix} Invoice state BEFORE markInvoicePaid: status=${preMarkInvoice.status}, PI=${preMarkPI?.id || 'none'}, PI_status=${preMarkPI?.status || 'n/a'}, PI_payment_method=${preMarkPI?.payment_method || 'none'}`);
+    console.log(`${logPrefix} PaymentRecord created: ${paymentRecord.id} (outcome: ${isPending ? 'failed' : 'guaranteed'})`);
 
     const markResult = await markInvoicePaidWithFallback(invoiceId, paymentRecord.id, logPrefix);
     invoiceMarkedAsPaid = markResult.paid;
     console.log(`${logPrefix} markInvoicePaid result: paid=${markResult.paid}, invoiceStatus=${markResult.invoiceStatus}`);
   } else {
-    console.error(`${logPrefix} NO resolvedCpmTypeId — skipping PaymentMethod/PaymentRecord/markInvoicePaid entirely!`);
+    console.error(`${logPrefix} No PaymentMethod available — skipping PaymentRecord/markInvoicePaid entirely!`);
   }
 
   // Store IDs on invoice so webhook handler's idempotency guard skips re-processing

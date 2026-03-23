@@ -20,6 +20,7 @@ vi.mock('@/lib/stripe', () => ({
     },
     subscriptions: {
       retrieve: vi.fn(),
+      update: vi.fn(),
     },
     paymentMethods: {
       create: vi.fn(),
@@ -80,6 +81,13 @@ function makeInvoice(overrides: Record<string, unknown> = {}) {
       },
     },
     subscription: { id: 'sub_test', status: 'active' },
+    default_payment_method: {
+      id: 'pm_existing',
+      metadata: {
+        hitpay_recurring_billing_id: 'rb_test',
+        hitpay_payment_method: 'shopee_recurring',
+      },
+    },
     metadata: {},
     ...overrides,
   };
@@ -92,6 +100,7 @@ beforeEach(() => {
   mockStripe.invoices.pay.mockResolvedValue({});
   mockStripe.paymentMethods.create.mockResolvedValue({ id: 'pm_test' });
   mockStripe.paymentMethods.attach.mockResolvedValue({});
+  mockStripe.subscriptions.update.mockResolvedValue({});
   mockStripe.paymentRecords.reportPayment.mockResolvedValue({ id: 'prec_test' });
   mockChargeRecurringBilling.mockResolvedValue({
     payment_id: 'hp_pay_123',
@@ -107,8 +116,9 @@ describe('chargeInvoiceInternal', () => {
   it('1. Happy path: attachPayment succeeds, invoice paid', async () => {
     const invoice = makeInvoice();
     mockStripe.invoices.retrieve
-      .mockResolvedValueOnce(invoice) // initial retrieve
-      .mockResolvedValueOnce({ ...invoice, status: 'paid' }) // markInvoicePaidWithFallback verify
+      .mockResolvedValueOnce(invoice) // initial retrieve (chargeInvoiceInternal)
+      .mockResolvedValueOnce(invoice) // markInvoicePaidWithFallback BEFORE diagnostic
+      .mockResolvedValueOnce({ ...invoice, status: 'paid' }) // markInvoicePaidWithFallback AFTER verify
       .mockResolvedValueOnce({ ...invoice, status: 'paid', subscription: { id: 'sub_test', status: 'active' } }); // final verify
 
     const result = await chargeInvoiceInternal('in_test', 'api');
@@ -123,7 +133,8 @@ describe('chargeInvoiceInternal', () => {
     const invoice = makeInvoice();
     mockStripe.invoices.retrieve
       .mockResolvedValueOnce(invoice) // initial
-      .mockResolvedValueOnce({ ...invoice, status: 'open' }) // after failed attachPayment
+      .mockResolvedValueOnce(invoice) // markInvoicePaidWithFallback BEFORE diagnostic
+      .mockResolvedValueOnce({ ...invoice, status: 'open' }) // markInvoicePaidWithFallback AFTER (still open)
       .mockResolvedValueOnce({ ...invoice, status: 'paid', subscription: { id: 'sub_test', status: 'active' } }); // final verify
 
     mockStripe.invoices.attachPayment.mockRejectedValueOnce(new Error('beta API error'));
@@ -139,8 +150,9 @@ describe('chargeInvoiceInternal', () => {
   it('3. Both attachPayment and paid_out_of_band fail', async () => {
     const invoice = makeInvoice();
     mockStripe.invoices.retrieve
-      .mockResolvedValueOnce(invoice)
-      .mockResolvedValueOnce({ ...invoice, status: 'open' }) // still open
+      .mockResolvedValueOnce(invoice) // initial
+      .mockResolvedValueOnce(invoice) // markInvoicePaidWithFallback BEFORE diagnostic
+      .mockResolvedValueOnce({ ...invoice, status: 'open' }) // markInvoicePaidWithFallback AFTER (still open)
       .mockResolvedValueOnce({ ...invoice, status: 'open', subscription: { id: 'sub_test', status: 'incomplete' } });
 
     mockStripe.invoices.attachPayment.mockRejectedValueOnce(new Error('beta API error'));
@@ -184,8 +196,9 @@ describe('chargeInvoiceInternal', () => {
 
     const invoice = makeInvoice();
     mockStripe.invoices.retrieve
-      .mockResolvedValueOnce(invoice)
-      .mockResolvedValueOnce({ ...invoice, status: 'paid' })
+      .mockResolvedValueOnce(invoice) // initial
+      .mockResolvedValueOnce(invoice) // markInvoicePaidWithFallback BEFORE diagnostic
+      .mockResolvedValueOnce({ ...invoice, status: 'paid' }) // markInvoicePaidWithFallback AFTER
       .mockResolvedValueOnce({ ...invoice, status: 'paid', subscription: { id: 'sub_test', status: 'active' } });
 
     const result = await chargeInvoiceInternal('in_test', 'api');
@@ -259,8 +272,9 @@ describe('Stripe webhook (invoice.payment_attempt_required)', () => {
 
     const invoice = makeInvoice({ id: 'in_renewal' });
     mockStripe.invoices.retrieve
-      .mockResolvedValueOnce(invoice)
-      .mockResolvedValueOnce({ ...invoice, status: 'paid' })
+      .mockResolvedValueOnce(invoice) // initial
+      .mockResolvedValueOnce(invoice) // markInvoicePaidWithFallback BEFORE diagnostic
+      .mockResolvedValueOnce({ ...invoice, status: 'paid' }) // markInvoicePaidWithFallback AFTER
       .mockResolvedValueOnce({ ...invoice, status: 'paid', subscription: { id: 'sub_test', status: 'active' } });
 
     const origSecret = process.env.STRIPE_WEBHOOK_SECRET;
