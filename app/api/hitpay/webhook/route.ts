@@ -167,7 +167,7 @@ async function handleRecurringChargeWebhook(payload: Record<string, unknown>) {
   // Retrieve customer to get CPM type
   const customer = (await stripe.customers.retrieve(stripeCustomerId)) as Stripe.Customer;
   const recurringBillingId = customer.metadata?.hitpay_recurring_billing_id || '';
-  let resolvedCpmTypeId = customer.metadata?.hitpay_cpm_type_id;
+  let resolvedCpmTypeId: string | undefined = customer.metadata?.hitpay_cpm_type_id;
 
   // Fallback: resolve CPM from payment_provider.charge.method
   if (!resolvedCpmTypeId) {

@@ -184,9 +184,10 @@ export async function POST(request: NextRequest) {
       if (latestInvoiceId) {
         // Fetch invoice directly (nested expansion on subscription.create can silently fail)
         console.log(`[Subscription] Fetching invoice: ${latestInvoiceId}`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let fetchedInvoice = await stripeSubscriptions.invoices.retrieve(latestInvoiceId, {
           expand: ['payment_intent'],
-        });
+        }) as any;
 
         // For charge_automatically + default_incomplete with no existing payment method,
         // Stripe keeps the invoice in draft state (no PI yet). Finalize it to create the PI.

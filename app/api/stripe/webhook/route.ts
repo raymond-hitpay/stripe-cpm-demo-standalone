@@ -27,7 +27,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { chargeInvoiceInternal } from '@/app/api/subscription/charge-invoice/route';
+import { chargeInvoiceInternal } from '@/lib/charge-invoice';
 import { stripe } from '@/lib/stripe';
 
 // Disable body parsing - we need the raw body for signature verification

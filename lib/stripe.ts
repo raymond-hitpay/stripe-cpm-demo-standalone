@@ -40,7 +40,8 @@ function getStripeCloverClient() {
 }
 
 function getStripeStandardClient() {
-  return new Stripe(resolveSecretKey(), { apiVersion: '2024-12-18.acacia' });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return new Stripe(resolveSecretKey(), { apiVersion: '2024-12-18.acacia' as any });
 }
 
 /**

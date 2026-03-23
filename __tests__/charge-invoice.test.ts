@@ -57,7 +57,7 @@ vi.mock('@/config/payment-methods', () => ({
 
 import { stripe } from '@/lib/stripe';
 import { chargeRecurringBilling } from '@/lib/hitpay';
-import { chargeInvoiceInternal } from '@/app/api/subscription/charge-invoice/route';
+import { chargeInvoiceInternal } from '@/lib/charge-invoice';
 
 const mockStripe = stripe as any;
 const mockChargeRecurringBilling = chargeRecurringBilling as ReturnType<typeof vi.fn>;

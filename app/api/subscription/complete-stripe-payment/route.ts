@@ -99,7 +99,8 @@ export async function POST(request: NextRequest) {
           ? invoicePaymentIntentField
           : (invoicePaymentIntentField as Stripe.PaymentIntent | null)?.id;
 
-      const confirmedPI = await stripe.paymentIntents.retrieve(paymentIntentId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const confirmedPI = await stripe.paymentIntents.retrieve(paymentIntentId) as any;
 
       // Determine if this PI is linked to the invoice:
       // - direct match: PI ID equals the invoice's payment_intent field

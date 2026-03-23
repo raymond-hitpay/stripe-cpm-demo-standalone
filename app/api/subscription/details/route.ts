@@ -11,9 +11,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
       expand: ['items.data.price.product'],
-    });
+    }) as any;
 
     const item = subscription.items.data[0];
     const price = item?.price as Stripe.Price & { product: Stripe.Product };
