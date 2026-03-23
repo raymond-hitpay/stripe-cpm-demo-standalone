@@ -5,16 +5,18 @@
  * 1. Displays Stripe Payment Element with payment methods
  * 2. Tracks user's payment method selection via onChange event
  * 3. Shows a confirmation button for user to proceed
- * 4. For HitPay CPMs: redirects to HitPay for authorization
+ * 4. For HitPay CPMs: opens deep link in new tab, polls for charge confirmation
  * 5. For Stripe native methods: uses stripe.confirmPayment()
  *
  * @see /app/subscribe/page.tsx - Parent page that renders this component
  * @see /api/hitpay/recurring-billing/create - Creates HitPay recurring session
+ * @see /api/subscription/charge-status - Polls for invoice charge status
  */
 'use client';
 
 import { PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   isCustomPaymentMethod,
   getPaymentMethodConfig,
@@ -58,14 +60,18 @@ export function AutoChargePaymentElement({
 }: AutoChargePaymentElementProps) {
   const stripe = useStripe();
   const elements = useElements();
+  const router = useRouter();
 
   // Track selected payment method type
   const [selectedPaymentMethodType, setSelectedPaymentMethodType] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Ref to prevent duplicate submissions
   const hasInitiatedRedirect = useRef(false);
+  // Ref for polling interval
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if selected method is a HitPay CPM
   const isHitPayCpm = selectedPaymentMethodType
@@ -78,7 +84,45 @@ export function AutoChargePaymentElement({
     : null;
 
   /**
-   * Initiates redirect to HitPay for payment method authorization.
+   * Polls the charge status endpoint until the invoice is paid.
+   */
+  const startPolling = useCallback(() => {
+    if (pollingRef.current) return;
+
+    console.log('[AutoCharge] Starting charge status polling for invoice:', invoiceId);
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/subscription/charge-status?invoiceId=${invoiceId}`);
+        const data = await res.json();
+
+        console.log('[AutoCharge] Poll result:', data.status);
+
+        if (data.status === 'paid') {
+          console.log('[AutoCharge] Invoice paid! Redirecting to success...');
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          pollingRef.current = null;
+
+          router.push(`/subscribe/success?subscription_id=${subscriptionId}&method=auto_charge`);
+        }
+      } catch (err) {
+        console.error('[AutoCharge] Poll error:', err);
+      }
+    }, 3000);
+  }, [invoiceId, subscriptionId, router]);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, []);
+
+  /**
+   * Opens HitPay deep link in new tab and starts polling.
    */
   const initiateHitPayRedirect = async (cpmTypeId: string) => {
     const cpmConfig = getPaymentMethodConfig(cpmTypeId);
@@ -111,8 +155,12 @@ export function AutoChargePaymentElement({
 
     const redirectUrl = data.directLinkUrl || data.redirectUrl;
     if (redirectUrl) {
-      console.log('[AutoCharge] Redirecting current tab to HitPay:', redirectUrl);
-      window.location.href = redirectUrl;
+      console.log('[AutoCharge] Opening HitPay in new tab:', redirectUrl);
+      window.open(redirectUrl, '_blank');
+
+      // Show waiting state and start polling
+      setAwaitingConfirmation(true);
+      startPolling();
     } else {
       throw new Error('No redirect URL received from HitPay');
     }
@@ -130,7 +178,7 @@ export function AutoChargePaymentElement({
 
     try {
       if (isHitPayCpm) {
-        // HitPay CPM: redirect to HitPay for authorization
+        // HitPay CPM: open in new tab + poll for confirmation
         await initiateHitPayRedirect(selectedPaymentMethodType);
       } else {
         // Stripe native method: use confirmPayment
@@ -157,7 +205,12 @@ export function AutoChargePaymentElement({
           : 'Failed to setup payment. Please try again.'
       );
       setIsProcessing(false);
+      setAwaitingConfirmation(false);
       hasInitiatedRedirect.current = false;
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
     }
   };
 
@@ -185,9 +238,9 @@ export function AutoChargePaymentElement({
    * Get button text based on selected payment method.
    */
   const getButtonText = () => {
-    if (isProcessing) {
+    if (isProcessing && !awaitingConfirmation) {
       return isHitPayCpm
-        ? `Redirecting to ${selectedCpmConfig?.displayName || 'payment provider'}...`
+        ? `Opening ${selectedCpmConfig?.displayName || 'payment provider'}...`
         : 'Processing...';
     }
     if (isHitPayCpm && selectedCpmConfig) {
@@ -196,6 +249,72 @@ export function AutoChargePaymentElement({
     return 'Setup Auto-Charge';
   };
 
+  // =========================================================================
+  // AWAITING CONFIRMATION STATE
+  // =========================================================================
+  if (awaitingConfirmation) {
+    return (
+      <div className="space-y-4">
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-6 text-center">
+          <svg
+            className="animate-spin h-10 w-10 text-purple-600 mx-auto mb-4"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            />
+          </svg>
+          <h3 className="text-lg font-semibold text-purple-900 mb-2">
+            Awaiting Payment Authorization
+          </h3>
+          <p className="text-purple-700 text-sm mb-4">
+            Complete the authorization in the new tab.
+            This page will update automatically once confirmed.
+          </p>
+          <div className="bg-white rounded-lg p-3 inline-block">
+            <p className="text-gray-600 text-sm">
+              {selectedCpmConfig?.displayName || 'Payment'} • {formatPrice(amount, currency)}
+            </p>
+          </div>
+        </div>
+
+        <p className="text-xs text-gray-500 text-center">
+          Don&apos;t see the authorization page?{' '}
+          <button
+            type="button"
+            onClick={() => {
+              // Reset to allow retry
+              setAwaitingConfirmation(false);
+              setIsProcessing(false);
+              hasInitiatedRedirect.current = false;
+              if (pollingRef.current) {
+                clearInterval(pollingRef.current);
+                pollingRef.current = null;
+              }
+            }}
+            className="text-purple-600 hover:text-purple-700 underline"
+          >
+            Try again
+          </button>
+        </p>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // NORMAL STATE — Payment Element + Setup Button
+  // =========================================================================
   return (
     <div className="space-y-4">
       {/* Info box */}
@@ -254,7 +373,7 @@ export function AutoChargePaymentElement({
               </svg>
               <p className="text-gray-700 font-medium">
                 {isHitPayCpm
-                  ? `Redirecting to ${selectedCpmConfig?.displayName || 'payment provider'}...`
+                  ? `Opening ${selectedCpmConfig?.displayName || 'payment provider'}...`
                   : 'Processing payment...'}
               </p>
               <p className="text-gray-500 text-sm mt-1">

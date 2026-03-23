@@ -88,19 +88,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Build redirect URL for after customer authorizes payment method
-    // Dynamically get the host from request headers
+    // Build redirect URL using the request host (where the user is browsing)
+    // so redirects come back to the correct origin (localhost or deployed URL)
     const host = request.headers.get('host') || 'localhost:3001';
     const protocol = request.headers.get('x-forwarded-proto') || 'http';
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${protocol}://${host}`;
-    const redirectUrl = new URL('/subscribe/setup', baseUrl);
+    const redirectBaseUrl = `${protocol}://${host}`;
+    const redirectUrl = new URL('/subscribe/setup', redirectBaseUrl);
     redirectUrl.searchParams.set('subscription_id', subscriptionId);
     redirectUrl.searchParams.set('customer_id', customerId);
     redirectUrl.searchParams.set('invoice_id', invoiceId || '');
 
-    // Webhook URL — receives recurring_billing.method_attached to charge the
-    // first invoice server-side (more reliable than waiting for the redirect)
-    const webhookUrl = new URL('/api/hitpay/webhook', baseUrl);
+    // Webhook URL — use NEXT_PUBLIC_SITE_URL (public/deployed URL) so HitPay
+    // can reach it. Falls back to request host if not set.
+    const webhookBaseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${protocol}://${host}`;
+    const webhookUrl = new URL('/api/hitpay/webhook', webhookBaseUrl);
 
     console.log(`[HitPay Recurring] Creating session for ${customerEmail}, method: ${paymentMethod}`);
 
