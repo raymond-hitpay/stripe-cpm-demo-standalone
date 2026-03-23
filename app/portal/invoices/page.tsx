@@ -33,6 +33,7 @@ interface Invoice {
   billing_reason: string | null;
   hosted_invoice_url: string | null;
   collection_method: string;
+  refund_hitpay_id: string | null;
 }
 
 // =============================================================================
@@ -62,6 +63,7 @@ function StatusBadge({ status }: { status: string }) {
     draft: 'bg-gray-100 text-gray-600',
     void: 'bg-gray-100 text-gray-500',
     uncollectible: 'bg-red-100 text-red-600',
+    refunded: 'bg-orange-100 text-orange-700',
   };
   const label: Record<string, string> = {
     paid: 'Paid',
@@ -69,6 +71,7 @@ function StatusBadge({ status }: { status: string }) {
     draft: 'Draft',
     void: 'Void',
     uncollectible: 'Uncollectible',
+    refunded: 'Refunded',
   };
   const cls = styles[status] || 'bg-gray-100 text-gray-600';
   return (
@@ -264,7 +267,7 @@ function InvoicesContent() {
 
                 {/* Status */}
                 <div>
-                  <StatusBadge status={invoice.status} />
+                  <StatusBadge status={invoice.refund_hitpay_id ? 'refunded' : invoice.status} />
                 </div>
 
                 {/* Action */}

@@ -39,6 +39,11 @@ interface Invoice {
   billing_reason: string | null;
   hosted_invoice_url: string | null;
   collection_method: string;
+  hitpay_payment_id: string | null;
+  stripe_payment_record_id: string | null;
+  refund_hitpay_id: string | null;
+  refund_amount: string | null;
+  refunded_at: string | null;
 }
 
 // =============================================================================
@@ -106,6 +111,11 @@ function InvoiceDetailContent({ invoiceId }: { invoiceId: string }) {
   // Auto-charge state
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulateResult, setSimulateResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Refund state
+  const [refundAmount, setRefundAmount] = useState('');
+  const [isRefunding, setIsRefunding] = useState(false);
+  const [refundResult, setRefundResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // ─── Load data ────────────────────────────────────────────────────────────
 
@@ -210,6 +220,56 @@ function InvoiceDetailContent({ invoiceId }: { invoiceId: string }) {
       setSimulateResult({ success: false, message: 'Request failed. Please try again.' });
     } finally {
       setIsSimulating(false);
+    }
+  };
+
+  // ─── Refund handler ──────────────────────────────────────────────────────
+
+  const isRefundable = effectiveStatus === 'paid'
+    && !!invoice?.hitpay_payment_id
+    && !!invoice?.stripe_payment_record_id
+    && !invoice?.refund_hitpay_id;
+
+  const handleRefund = async () => {
+    if (!invoice) return;
+    const amountCents = Math.round(parseFloat(refundAmount) * 100);
+    if (isNaN(amountCents) || amountCents <= 0) {
+      setRefundResult({ success: false, message: 'Please enter a valid refund amount.' });
+      return;
+    }
+    if (amountCents > invoice.amount_paid) {
+      setRefundResult({ success: false, message: 'Refund amount cannot exceed the paid amount.' });
+      return;
+    }
+
+    setIsRefunding(true);
+    setRefundResult(null);
+    try {
+      const res = await fetch('/api/portal/refund', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId: invoice.id,
+          amount: amountCents,
+        }),
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setRefundResult({
+          success: true,
+          message: `Refund of ${formatCurrency(amountCents, invoice.currency)} processed successfully.`,
+        });
+      } else {
+        setRefundResult({
+          success: false,
+          message: data.error || 'Refund failed. Please try again.',
+        });
+      }
+    } catch {
+      setRefundResult({ success: false, message: 'Request failed. Please try again.' });
+    } finally {
+      setIsRefunding(false);
     }
   };
 
@@ -433,6 +493,100 @@ function InvoiceDetailContent({ invoiceId }: { invoiceId: string }) {
           )}
           <p className={`font-medium text-sm ${simulateResult.success ? 'text-green-800' : 'text-red-700'}`}>
             {simulateResult.message}
+          </p>
+        </div>
+      )}
+
+      {/* Already refunded banner */}
+      {invoice.refund_hitpay_id && (
+        <div className="mt-6 bg-orange-50 border border-orange-200 rounded-xl p-4 flex items-center gap-3">
+          <svg className="w-5 h-5 text-orange-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+          </svg>
+          <div>
+            <p className="text-orange-800 font-medium">
+              Refunded: {invoice.refund_amount ? formatCurrency(Math.round(parseFloat(invoice.refund_amount) * 100), invoice.currency) : ''}
+            </p>
+            {invoice.refunded_at && (
+              <p className="text-orange-600 text-xs mt-0.5">
+                {new Date(invoice.refunded_at).toLocaleString('en-SG')}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Refund section — paid invoices with HitPay payment */}
+      {isRefundable && !refundResult && (
+        <div className="mt-6">
+          <h2 className="text-base font-semibold text-gray-900 mb-4">Refund Payment</h2>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <p className="text-sm text-gray-600 mb-4">
+              Initiate a full or partial refund. This will refund the payment on HitPay and record the refund in Stripe.
+            </p>
+            <div className="flex items-end gap-3">
+              <div className="flex-1">
+                <label htmlFor="refundAmount" className="block text-sm font-medium text-gray-700 mb-1">
+                  Refund Amount ({invoice.currency.toUpperCase()})
+                </label>
+                <input
+                  type="number"
+                  id="refundAmount"
+                  value={refundAmount}
+                  onChange={(e) => setRefundAmount(e.target.value)}
+                  placeholder={(invoice.amount_paid / 100).toFixed(2)}
+                  step="0.01"
+                  min="0.01"
+                  max={(invoice.amount_paid / 100).toFixed(2)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-colors"
+                  disabled={isRefunding}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Max: {formatCurrency(invoice.amount_paid, invoice.currency)}
+                </p>
+              </div>
+              <button
+                onClick={handleRefund}
+                disabled={isRefunding || !refundAmount}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isRefunding ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Processing...
+                  </>
+                ) : (
+                  'Initiate Refund'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Refund result */}
+      {refundResult && (
+        <div
+          className={`mt-6 rounded-xl p-4 flex items-center gap-3 border ${
+            refundResult.success
+              ? 'bg-green-50 border-green-200'
+              : 'bg-red-50 border-red-200'
+          }`}
+        >
+          {refundResult.success ? (
+            <svg className="w-5 h-5 text-green-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5 text-red-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          )}
+          <p className={`font-medium text-sm ${refundResult.success ? 'text-green-800' : 'text-red-700'}`}>
+            {refundResult.message}
           </p>
         </div>
       )}

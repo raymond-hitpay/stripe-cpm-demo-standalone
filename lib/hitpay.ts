@@ -646,6 +646,71 @@ export async function chargeRecurringBilling(
  * }
  * ```
  */
+/**
+ * Response from HitPay refund API.
+ */
+export interface HitPayRefundResponse {
+  /** Refund transaction ID */
+  id: string;
+  /** Associated payment ID */
+  payment_id: string;
+  /** Amount refunded */
+  amount_refunded: number;
+  /** Original payment amount */
+  total_amount: number;
+  /** Currency */
+  currency: string;
+  /** Refund status */
+  status: string;
+  /** Original payment method */
+  payment_method: string;
+  /** Refund timestamp */
+  refunded_at: string;
+  /** Creation timestamp */
+  created_at: string;
+}
+
+/**
+ * Refunds a HitPay payment (full or partial).
+ *
+ * @param paymentId - The HitPay payment ID (from the payments array, not the payment request ID)
+ * @param amount - Amount to refund
+ * @returns The refund result
+ * @throws Error if the API request fails
+ */
+export async function refundPayment(
+  paymentId: string,
+  amount: number
+): Promise<HitPayRefundResponse> {
+  const apiKey = HITPAY_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      `HITPAY_API_KEY_${hitpayEnv.toUpperCase()} is not set. Please configure it in your .env.local file.`
+    );
+  }
+
+  const formData = new URLSearchParams();
+  formData.append('payment_id', paymentId);
+  formData.append('amount', amount.toFixed(2));
+
+  const response = await fetch(`${HITPAY_API_BASE}/refund`, {
+    method: 'POST',
+    headers: {
+      'X-BUSINESS-API-KEY': apiKey,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: formData.toString(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`HitPay refund error (${response.status}): ${error}`);
+  }
+
+  return response.json();
+}
+
 export async function getRecurringBilling(
   recurringBillingId: string
 ): Promise<HitPayRecurringBillingResponse> {

@@ -59,6 +59,7 @@ export async function GET(request: NextRequest) {
       billing_reason: inv.billing_reason,
       hosted_invoice_url: inv.hosted_invoice_url,
       collection_method: inv.collection_method,
+      refund_hitpay_id: inv.metadata?.refund_hitpay_id || null,
     }));
 
     return NextResponse.json({ invoices });

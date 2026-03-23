@@ -49,6 +49,12 @@ export async function GET(
       billing_reason: inv.billing_reason,
       hosted_invoice_url: inv.hosted_invoice_url,
       collection_method: inv.collection_method,
+      // Refund-related metadata
+      hitpay_payment_id: inv.metadata?.hitpay_payment_id || null,
+      stripe_payment_record_id: inv.metadata?.stripe_payment_record_id || null,
+      refund_hitpay_id: inv.metadata?.refund_hitpay_id || null,
+      refund_amount: inv.metadata?.refund_amount || null,
+      refunded_at: inv.metadata?.refunded_at || null,
     });
   } catch (error: unknown) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
