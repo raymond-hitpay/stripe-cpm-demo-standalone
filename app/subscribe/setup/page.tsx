@@ -105,28 +105,13 @@ function SetupContent() {
           );
         }
 
-        // Charge the first invoice now that the payment method is authorized
-        setStep('charging');
-        const chargeResponse = await fetch('/api/subscription/charge-invoice', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ invoiceId }),
-        });
+        // The authorization flow already charged the customer (wallet-based methods
+        // like GrabPay and ShopeePay charge during authorization). The HitPay
+        // charge.created webhook will record the payment in Stripe and mark the
+        // invoice as paid. We skip calling charge-invoice here to avoid a duplicate charge.
+        console.log('[Setup] Authorization succeeded — skipping charge-invoice (webhook will handle payment recording)');
 
-        if (!chargeResponse.ok) {
-          const err = await chargeResponse.json();
-          throw new Error(err.error || 'Failed to process payment');
-        }
-
-        const chargeResult = await chargeResponse.json();
-        if (chargeResult.invoiceStatus !== 'paid') {
-          console.warn('[Setup] HitPay charge: invoice not yet confirmed paid:', chargeResult.invoiceStatus);
-        }
-        if (chargeResult.subscriptionStatus && chargeResult.subscriptionStatus !== 'active') {
-          console.warn('[Setup] HitPay charge: subscription not yet active:', chargeResult.subscriptionStatus);
-        }
-
-        // Redirect to success (charge is async — charge.created webhook will confirm)
+        // Redirect to success
         setStep('success');
         const params = new URLSearchParams({
           subscription_id: subscriptionId,

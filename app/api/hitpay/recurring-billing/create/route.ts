@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
     const webhookBaseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${protocol}://${host}`;
     const webhookUrl = new URL('/api/hitpay/webhook', webhookBaseUrl);
 
-    console.log(`[HitPay Recurring] Creating session for ${customerEmail}, method: ${paymentMethod}`);
+    console.log(`[HitPay Recurring] Creating session for ${customerEmail}, method: ${paymentMethod}, subscriptionId: ${subscriptionId}, invoiceId: ${invoiceId}, amount: ${amount} ${currency}`);
 
     // Create HitPay recurring billing session
     const session = await createRecurringBilling({
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
       generate_embed: true,
     });
 
-    console.log(`[HitPay Recurring] Created session: ${session.id}`);
+    console.log(`[HitPay Recurring] Created session: ${session.id}, url: ${session.url}, status: ${session.status}, direct_link: ${session.direct_link?.direct_link_url || 'none'}`);
 
     // Store the recurring billing ID in Stripe customer metadata
     // This allows the charge-invoice endpoint to find it later

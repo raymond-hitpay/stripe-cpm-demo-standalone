@@ -80,8 +80,8 @@ export async function POST(request: NextRequest) {
         // via an external payment processor (our HitPay integration)
         const invoice = event.data.object as Stripe.Invoice;
 
-        console.log(`[Stripe Webhook] Processing invoice: ${invoice.id}`);
-        console.log(`[Stripe Webhook] Invoice status: ${invoice.status}, amount_due: ${invoice.amount_due}, billing_reason: ${invoice.billing_reason}`);
+        console.log(`[Stripe Webhook] Processing invoice: ${invoice.id} at ${new Date().toISOString()}`);
+        console.log(`[Stripe Webhook] Invoice status: ${invoice.status}, amount_due: ${invoice.amount_due}, billing_reason: ${invoice.billing_reason}, subscription: ${typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id}, metadata: ${JSON.stringify(invoice.metadata || {})}`);
 
         // Skip first invoice - it will be charged by the setup page
         // Only handle renewals via webhook

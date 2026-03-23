@@ -45,13 +45,16 @@ export async function chargeInvoiceInternal(
 ): Promise<ChargeInvoiceResult> {
   const logPrefix = source === 'webhook' ? '[Webhook Charge]' : '[Charge Invoice]';
 
-  console.log(`${logPrefix} Processing invoice: ${invoiceId}`);
+  const startTime = Date.now();
+  console.log(`${logPrefix} Processing invoice: ${invoiceId} at ${new Date().toISOString()}`);
 
   // Step 1: Get the invoice
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const invoice = await stripe.invoices.retrieve(invoiceId, {
     expand: ['customer', 'subscription', 'default_payment_method'],
   }) as any;
+
+  console.log(`${logPrefix} Invoice retrieved: id=${invoiceId}, status=${invoice.status}, amount_due=${invoice.amount_due}, billing_reason=${invoice.billing_reason}, metadata=${JSON.stringify(invoice.metadata || {})}`);
 
   // Check if already paid
   if (invoice.status === 'paid') {
@@ -158,7 +161,7 @@ export async function chargeInvoiceInternal(
       };
     }
 
-    console.log(`${logPrefix} HitPay charge initiated: ${hitpayCharge.payment_id} (${hitpayCharge.status})`);
+    console.log(`${logPrefix} HitPay charge initiated: ${hitpayCharge.payment_id} (${hitpayCharge.status}), elapsed=${Date.now() - startTime}ms`);
   } catch (hitpayError) {
     console.error(`${logPrefix} HitPay error:`, hitpayError);
     return {
@@ -253,6 +256,8 @@ export async function chargeInvoiceInternal(
   } else {
     console.error(`${logPrefix} No PaymentMethod available — skipping PaymentRecord/markInvoicePaid entirely!`);
   }
+
+  console.log(`${logPrefix} Completed charge flow for invoice ${invoiceId}: paymentRecordId=${paymentRecordId}, paymentMethodId=${paymentMethodId}, invoiceMarkedAsPaid=${invoiceMarkedAsPaid}, isPending=${isPending}, elapsed=${Date.now() - startTime}ms`);
 
   // Store IDs on invoice so webhook handler's idempotency guard skips re-processing
   await stripe.invoices.update(invoiceId, {

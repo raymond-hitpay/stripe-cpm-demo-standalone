@@ -88,6 +88,8 @@ async function handleRecurringChargeWebhook(payload: Record<string, unknown>) {
     channel: payload.channel,
     status: payload.status,
     hasRelatable: !!payload.relatable,
+    timestamp: new Date().toISOString(),
+    fullPayload: JSON.stringify(payload),
   });
 
   if (status !== 'succeeded') {
@@ -146,6 +148,7 @@ async function handleRecurringChargeWebhook(payload: Record<string, unknown>) {
     invoiceId,
     stripeCustomerId,
     subscriptionRef: businessCharge.reference,
+    timestamp: new Date().toISOString(),
   });
 
   // Retrieve invoice
@@ -418,7 +421,8 @@ export async function POST(request: NextRequest) {
       if (event === 'recurring_billing.method_attached') {
         const recurringBilling = rawPayload.recurring_billing as Record<string, unknown> | undefined;
         const recurringBillingId = recurringBilling?.id as string | undefined;
-        console.log(`[HitPay Webhook] method_attached: billing_id=${recurringBillingId} — payment method saved, setup page will charge invoice`);
+        console.log(`[HitPay Webhook] method_attached at ${new Date().toISOString()}: billing_id=${recurringBillingId} — payment method saved, setup page will charge invoice`);
+        console.log(`[HitPay Webhook] method_attached full payload:`, JSON.stringify(rawPayload));
         return NextResponse.json({ received: true });
       }
 

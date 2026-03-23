@@ -155,8 +155,8 @@ export function AutoChargePaymentElement({
 
     const redirectUrl = data.directLinkUrl || data.redirectUrl;
     if (redirectUrl) {
-      console.log('[AutoCharge] Opening HitPay in new tab:', redirectUrl);
-      window.open(redirectUrl, '_blank');
+      console.log('[AutoCharge] Redirecting to HitPay:', redirectUrl);
+      window.location.href = redirectUrl;
 
       // Show waiting state and start polling
       setAwaitingConfirmation(true);

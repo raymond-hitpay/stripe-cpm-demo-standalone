@@ -56,6 +56,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log(`[Charge Invoice API] Received charge request for invoice: ${invoiceId} at ${new Date().toISOString()}`);
+
     if (!invoiceId.startsWith('in_')) {
       return NextResponse.json(
         { error: 'Invalid invoiceId format. Must start with "in_"' },
