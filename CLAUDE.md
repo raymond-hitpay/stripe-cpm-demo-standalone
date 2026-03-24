@@ -245,8 +245,7 @@ Only works with CPMs that have `chargeAutomatically: true` (e.g., ShopeePay, Gra
    → Records payment in Stripe via Payment Records API
 9. Redirect to /subscribe/success
 10. On next billing cycle:
-    → Stripe creates invoice in draft → fires `invoice.created` webhook
-    → Webhook auto-finalizes draft → fires `invoice.payment_attempt_required`
+    → Stripe creates and auto-finalizes invoice → fires `invoice.payment_attempt_required`
     → Webhook handler charges saved HitPay payment method automatically
     → Records payment in Stripe via Payment Records API
     → Marks invoice as paid via attachPayment
@@ -362,7 +361,7 @@ The Stripe webhook at `/api/stripe/webhook` automatically handles subscription r
    - Go to Stripe Dashboard > Developers > Webhooks
    - Click "Add endpoint"
    - Enter your webhook URL: `https://yoursite.com/api/stripe/webhook`
-   - Select events: `invoice.created`, `invoice.payment_attempt_required`
+   - Select events: `invoice.payment_attempt_required`
    - Click "Add endpoint"
 
 3. **Copy the signing secret:**
@@ -391,13 +390,7 @@ stripe trigger invoice.payment_attempt_required
 ### Webhook Flow
 
 ```
-Stripe creates invoice (subscription renewal) → invoice in 'draft'
-        ↓
-Stripe fires invoice.created
-        ↓
-/api/stripe/webhook receives event
-        ↓
-Webhook auto-finalizes draft renewal invoice → invoice becomes 'open'
+Stripe creates invoice (subscription renewal) and auto-finalizes it
         ↓
 Stripe fires invoice.payment_attempt_required
         ↓
