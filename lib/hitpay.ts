@@ -371,12 +371,25 @@ export function verifyHitPayHeaderSignature(rawBody: string, signature: string):
     .update(rawBody)
     .digest('hex');
 
+  console.log('[HitPay] Signature debug:', {
+    saltPresent: !!salt,
+    saltLength: salt.length,
+    computedLength: computedHmac.length,
+    computedPreview: computedHmac.substring(0, 8),
+    receivedLength: signature.length,
+    receivedPreview: signature.substring(0, 8),
+    lengthsMatch: computedHmac.length === signature.length,
+    rawBodyLength: rawBody.length,
+    rawBodyPreview: rawBody.substring(0, 80),
+  });
+
   try {
     return crypto.timingSafeEqual(
       Buffer.from(computedHmac, 'hex'),
       Buffer.from(signature, 'hex')
     );
-  } catch {
+  } catch (e) {
+    console.error('[HitPay] timingSafeEqual threw (likely length mismatch):', e);
     return false;
   }
 }
