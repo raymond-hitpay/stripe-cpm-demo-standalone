@@ -556,9 +556,9 @@ export async function createRecurringBilling(
   if (data.redirect_url) formData.append('redirect_url', data.redirect_url);
   if (data.reference) formData.append('reference', data.reference);
   if (data.generate_embed) formData.append('generate_embed', 'true');
-  if (data.customer_phone_number && data.customer_phone_number_country_code) {
+  if (data.customer_phone_number && data.phone_number_country_code) {
     formData.append('customer_phone_number', data.customer_phone_number);
-    formData.append('customer_phone_number_country_code', data.customer_phone_number_country_code);
+    formData.append('phone_number_country_code', data.phone_number_country_code);
   }
 
   console.log('[HitPay] POST /recurring-billing body:', Object.fromEntries(formData.entries()));

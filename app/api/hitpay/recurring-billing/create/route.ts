@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
       customer_email: customerEmail,
       customer_name: customerName,
       customer_phone_number: customerPhone,
-      customer_phone_number_country_code: customerPhoneCountryCode,
+      phone_number_country_code: customerPhoneCountryCode,
       amount: amount, // Display amount for authorization
       currency: currency.toUpperCase(),
       save_payment_method: true,
