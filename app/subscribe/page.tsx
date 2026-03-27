@@ -44,6 +44,8 @@ function SubscribeContent() {
   // Customer details state
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerPhoneCountryCode, setCustomerPhoneCountryCode] = useState('65');
   const [detailsSubmitted, setDetailsSubmitted] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
 
@@ -77,7 +79,29 @@ function SubscribeContent() {
   const hasAutoChargeCpms = autoChargeCpms.length > 0;
 
   // Check if form is valid for submission
-  const isFormValid = customerEmail.trim() !== '' && customerName.trim() !== '';
+  const isFormValid =
+    customerEmail.trim() !== '' &&
+    customerName.trim() !== '' &&
+    (billingType !== 'charge_automatically' || customerPhone.trim() !== '');
+
+  // Country dial codes for phone number dropdown
+  const COUNTRY_CODES = [
+    { code: '65',  flag: '🇸🇬', name: 'Singapore' },
+    { code: '60',  flag: '🇲🇾', name: 'Malaysia' },
+    { code: '63',  flag: '🇵🇭', name: 'Philippines' },
+    { code: '62',  flag: '🇮🇩', name: 'Indonesia' },
+    { code: '66',  flag: '🇹🇭', name: 'Thailand' },
+    { code: '84',  flag: '🇻🇳', name: 'Vietnam' },
+    { code: '852', flag: '🇭🇰', name: 'Hong Kong' },
+    { code: '886', flag: '🇹🇼', name: 'Taiwan' },
+    { code: '61',  flag: '🇦🇺', name: 'Australia' },
+    { code: '91',  flag: '🇮🇳', name: 'India' },
+    { code: '1',   flag: '🇺🇸', name: 'United States' },
+    { code: '44',  flag: '🇬🇧', name: 'United Kingdom' },
+    { code: '81',  flag: '🇯🇵', name: 'Japan' },
+    { code: '82',  flag: '🇰🇷', name: 'South Korea' },
+    { code: '86',  flag: '🇨🇳', name: 'China' },
+  ];
 
   /**
    * Generates random customer details for testing.
@@ -97,6 +121,8 @@ function SubscribeContent() {
 
     setCustomerName(randomName);
     setCustomerEmail(randomEmail);
+    setCustomerPhone('91234567');
+    setCustomerPhoneCountryCode('65');
   };
 
   /**
@@ -153,6 +179,12 @@ function SubscribeContent() {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(customerEmail)) {
       setDetailsError('Please enter a valid email address');
+      return;
+    }
+
+    // Phone is required for auto-charge methods (e.g. ShopeePay, GrabPay)
+    if (billingType === 'charge_automatically' && !customerPhone.trim()) {
+      setDetailsError('Phone number is required for auto-charge payment methods (e.g. ShopeePay, GrabPay)');
       return;
     }
 
@@ -465,6 +497,36 @@ function SubscribeContent() {
                     />
                   </div>
 
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Phone Number
+                    </label>
+                    <div className="flex gap-2">
+                      <select
+                        id="phoneCountryCode"
+                        value={customerPhoneCountryCode}
+                        onChange={(e) => setCustomerPhoneCountryCode(e.target.value)}
+                        disabled={isCreatingSubscription}
+                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-colors bg-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {COUNTRY_CODES.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.flag} +{c.code}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        id="phone"
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        placeholder="91234567"
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-colors"
+                        disabled={isCreatingSubscription}
+                      />
+                    </div>
+                  </div>
+
                   {/* Prefill button for testing */}
                   <button
                     type="button"
@@ -578,6 +640,11 @@ function SubscribeContent() {
                   <p className="text-sm text-gray-600">
                     Email: <span className="font-medium text-gray-900">{customerEmail}</span>
                   </p>
+                  {customerPhone && (
+                    <p className="text-sm text-gray-600">
+                      Phone: <span className="font-medium text-gray-900">+{customerPhoneCountryCode} {customerPhone}</span>
+                    </p>
+                  )}
                   <p className="text-sm text-gray-600">
                     Billing: <span className="font-medium text-gray-900">
                       {billingType === 'charge_automatically' ? 'Auto-charge' : 'Pay each invoice'}
@@ -628,6 +695,8 @@ function SubscribeContent() {
                       invoiceId={invoiceId}
                       customerEmail={customerEmail}
                       customerName={customerName}
+                      customerPhone={customerPhone}
+                      customerPhoneCountryCode={customerPhoneCountryCode}
                       amount={invoiceAmount}
                       currency={invoiceCurrency}
                     />

@@ -425,6 +425,10 @@ export interface HitPayRecurringBillingRequest {
   reference?: string;
   /** Request an embedded payment or direct link in the response (for app-based methods) */
   generate_embed?: boolean;
+  /** Customer phone number (required for shopee_pay) */
+  customer_phone_number?: string;
+  /** Country code of the phone number (required for shopee_pay, e.g. "65") */
+  customer_phone_number_country_code?: string;
 }
 
 /**
@@ -552,6 +556,12 @@ export async function createRecurringBilling(
   if (data.redirect_url) formData.append('redirect_url', data.redirect_url);
   if (data.reference) formData.append('reference', data.reference);
   if (data.generate_embed) formData.append('generate_embed', 'true');
+  if (data.customer_phone_number && data.customer_phone_number_country_code) {
+    formData.append('customer_phone_number', data.customer_phone_number);
+    formData.append('customer_phone_number_country_code', data.customer_phone_number_country_code);
+  }
+
+  console.log('[HitPay] POST /recurring-billing body:', Object.fromEntries(formData.entries()));
 
   const response = await fetch(`${HITPAY_API_BASE}/recurring-billing`, {
     method: 'POST',

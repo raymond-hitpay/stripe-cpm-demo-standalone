@@ -39,6 +39,10 @@ interface AutoChargePaymentElementProps {
   customerEmail: string;
   /** Customer name */
   customerName: string;
+  /** Customer phone number (required for ShopeePay) */
+  customerPhone?: string;
+  /** Country code of the phone number (e.g. "65") */
+  customerPhoneCountryCode?: string;
   /** Invoice amount in dollars (e.g., 29.90) */
   amount: number;
   /** Currency code (e.g., 'sgd') */
@@ -55,6 +59,8 @@ export function AutoChargePaymentElement({
   invoiceId,
   customerEmail,
   customerName,
+  customerPhone,
+  customerPhoneCountryCode,
   amount,
   currency,
 }: AutoChargePaymentElementProps) {
@@ -141,6 +147,8 @@ export function AutoChargePaymentElement({
         currency,
         customerEmail,
         customerName,
+        customerPhone,
+        customerPhoneCountryCode,
         paymentMethod: recurringMethod,
         cpmTypeId,
         originUrl: window.location.href,

@@ -51,6 +51,8 @@ export async function POST(request: NextRequest) {
       currency,
       customerEmail,
       customerName,
+      customerPhone,
+      customerPhoneCountryCode,
       paymentMethod,
       cpmTypeId,
       originUrl,
@@ -62,6 +64,8 @@ export async function POST(request: NextRequest) {
       currency: string;
       customerEmail: string;
       customerName?: string;
+      customerPhone?: string;
+      customerPhoneCountryCode?: string;
       paymentMethod: string; // e.g., 'shopee_recurring', 'grabpay_direct', 'card'
       cpmTypeId?: string; // Stripe CPM Type ID for recording payments
       originUrl?: string; // Original page URL to return to after setup
@@ -110,6 +114,8 @@ export async function POST(request: NextRequest) {
       name: `Subscription ${subscriptionId}`,
       customer_email: customerEmail,
       customer_name: customerName,
+      customer_phone_number: customerPhone,
+      customer_phone_number_country_code: customerPhoneCountryCode,
       amount: amount, // Display amount for authorization
       currency: currency.toUpperCase(),
       save_payment_method: true,

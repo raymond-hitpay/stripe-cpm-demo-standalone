@@ -210,7 +210,7 @@ const PAYMENT_METHOD_DEFINITIONS: CustomPaymentMethodDefinition[] = [
     ids: {
       sandbox:    'cpmt_1T7SyiH0EH9sk7Naa0KmlUNX',
       staging:    'cpmt_1T7SyiH0EH9sk7Naa0KmlUNX',
-      production: 'cpmt_1T7SYhAMHowMCIhZr6WfpM6E',
+      production: 'cpmt_1TFQuqAMHowMCIhZvojWf6xK',
     },
     hitpayMethod: 'grabpay_direct',
     displayName: 'GrabPay',
