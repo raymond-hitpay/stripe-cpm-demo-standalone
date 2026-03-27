@@ -428,7 +428,7 @@ export interface HitPayRecurringBillingRequest {
   /** Customer phone number (required for shopee_pay) */
   customer_phone_number?: string;
   /** Country code of the phone number (required for shopee_pay, e.g. "65") */
-  customer_phone_number_country_code?: string;
+  phone_number_country_code?: string;
 }
 
 /**
