@@ -69,12 +69,10 @@ This project is the **standalone version** where:
    - PaymentIntent remains "Incomplete" - this is expected for external payments
    - Payment Records are separate objects with `prec_*` IDs
 
-5. **Beta Flag Required**
-   - Load Stripe.js with beta flag for custom payment methods:
+5. **No Beta Flag Required**
+   - Load Stripe.js normally — custom payment methods are now GA:
    ```javascript
-   loadStripe(publishableKey, {
-     betas: ['custom_payment_methods_beta_1'],
-   });
+   loadStripe(publishableKey);
    ```
 
 ### HitPay Integration

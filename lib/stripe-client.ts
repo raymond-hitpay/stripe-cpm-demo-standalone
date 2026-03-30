@@ -1,13 +1,9 @@
 /**
- * Client-side Stripe.js loader with Custom Payment Methods beta flag.
- *
- * IMPORTANT: Custom Payment Methods require loading Stripe.js with the
- * 'custom_payment_methods_beta_1' beta flag. Without this flag, the
- * customPaymentMethods option in Elements will be ignored silently.
+ * Client-side Stripe.js loader for Custom Payment Methods.
  *
  * This file should only be imported in client components ('use client').
  *
- * @see https://docs.stripe.com/custom-payment-methods/quickstart
+ * @see https://docs.stripe.com/payments/payment-element/custom-payment-methods
  */
 import { loadStripe, Stripe } from '@stripe/stripe-js';
 
@@ -30,8 +26,6 @@ if (!publishableKey && typeof window !== 'undefined') {
  * Promise that resolves to the Stripe.js instance.
  *
  * Returns null if the publishable key is not configured.
- * The beta flag enables Custom Payment Methods in the Payment Element,
- * allowing you to configure customPaymentMethods in the Elements provider.
  *
  * @example
  * ```tsx
@@ -46,9 +40,5 @@ if (!publishableKey && typeof window !== 'undefined') {
  * ```
  */
 export const stripePromise: Promise<Stripe | null> = publishableKey
-  ? loadStripe(publishableKey, {
-      // This beta flag enables Custom Payment Methods in the Payment Element.
-      // Without this, the customPaymentMethods option will be ignored.
-      betas: ['custom_payment_methods_beta_1'],
-    })
+  ? loadStripe(publishableKey)
   : Promise.resolve(null);

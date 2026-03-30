@@ -303,7 +303,7 @@ HitPay sends webhooks when payment status changes. The endpoint:
 1. **Check CPM Type ID**: Ensure the `id` in `/config/payment-methods.ts` matches your Stripe Dashboard
 2. **Enable the CPM Type**: Go to Stripe Dashboard → Payment Methods → Enable your custom type
 3. **Check Console**: Look for warnings about missing configuration
-4. **Beta Flag**: Ensure Stripe.js is loaded with `custom_payment_methods_beta_1`
+4. **Stripe.js**: Ensure `stripePromise` from `lib/stripe-client.ts` is used (not a plain `loadStripe` call)
 
 ### QR Code not generating
 
@@ -328,7 +328,7 @@ HitPay sends webhooks when payment status changes. The endpoint:
 ### Custom Payment Methods (CPM)
 
 - CPM types are configured **client-side** via Elements, not via PaymentIntent
-- Requires the `custom_payment_methods_beta_1` beta flag in Stripe.js
+- CPM support is now GA — no beta flag required in Stripe.js
 - External payments are recorded via the Payment Records API
 
 ### Payment Records API

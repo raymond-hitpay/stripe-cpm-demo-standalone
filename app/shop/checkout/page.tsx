@@ -11,9 +11,8 @@
  *    in PaymentIntent. They are configured via the customPaymentMethods option in
  *    the Elements provider.
  *
- * 2. **Beta flag required**
- *    Stripe.js must be loaded with the 'custom_payment_methods_beta_1' beta flag
- *    (see /lib/stripe-client.ts).
+ * 2. **Stripe.js**
+ *    Use stripePromise from /lib/stripe-client.ts (CPM support is now GA, no beta flag needed).
  *
  * 3. **CPM Type ID**
  *    You must create a Custom Payment Method Type in your Stripe Dashboard and
