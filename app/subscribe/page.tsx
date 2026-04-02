@@ -324,7 +324,6 @@ function SubscribeContent() {
           id: pm.id,
           options: {
             type: 'embedded' as const,
-            subtitle: 'Scan to pay',
             embedded: {
               handleRender: (container: HTMLElement) => {
                 console.log('[Embedded] handleRender called for', pm.displayName);

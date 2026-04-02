@@ -350,7 +350,12 @@ export function AutoChargePaymentElement({
       <div className="relative">
         <PaymentElement
           options={{
-            layout: 'tabs',
+            layout: {
+              type: 'accordion',
+              defaultCollapsed: false,
+              radios: 'always',
+              spacedAccordionItems: false,
+            },
             paymentMethodOrder: getAutoChargeCpmTypeIds(),
           }}
           onChange={handlePaymentElementChange}

@@ -436,7 +436,12 @@ export function CheckoutForm({
       <PaymentElement
         options={
           {
-            layout: 'tabs',
+            layout: {
+              type: 'accordion',
+              defaultCollapsed: false,
+              radios: 'always',
+              spacedAccordionItems: false,
+            },
             // Show standard payment methods first, then custom payment methods
             paymentMethodOrder: ['card', 'google_pay', 'apple_pay', 'link', ...getAllCpmTypeIds()],
           } as any // Type assertion needed for beta API

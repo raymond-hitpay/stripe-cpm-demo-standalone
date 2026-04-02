@@ -447,7 +447,12 @@ export function SubscriptionCheckoutForm({
       <PaymentElement
         options={
           {
-            layout: 'tabs',
+            layout: {
+              type: 'accordion',
+              defaultCollapsed: false,
+              radios: 'always',
+              spacedAccordionItems: false,
+            },
             paymentMethodOrder: ['card', 'google_pay', 'apple_pay', 'link', ...getAllCpmTypeIds()],
           } as any
         }

@@ -291,7 +291,12 @@ export function InvoicePaymentForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <PaymentElement
         options={{
-          layout: 'tabs',
+          layout: {
+            type: 'accordion',
+            defaultCollapsed: false,
+            radios: 'always',
+            spacedAccordionItems: false,
+          },
           paymentMethodOrder: ['card', ...getAllCpmTypeIds()],
         } as any}
         onChange={handlePaymentElementChange}
