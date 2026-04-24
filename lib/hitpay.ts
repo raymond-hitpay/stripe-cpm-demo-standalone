@@ -425,6 +425,12 @@ export interface HitPayRecurringBillingRequest {
   reference?: string;
   /** Request an embedded payment or direct link in the response (for app-based methods) */
   generate_embed?: boolean;
+  /** Request a QR code in the response (e.g. ZaloPay) */
+  generate_qr?: boolean;
+  /** Request a direct link in the response (e.g. ShopeePay, GrabPay, Touch 'N Go) */
+  generate_direct_link?: boolean;
+  /** Request payment instructions in the response (e.g. GIRO) */
+  generate_instructions?: boolean;
   /** Customer phone number (required for shopee_pay) */
   customer_phone_number?: string;
   /** Country code of the phone number (required for shopee_pay, e.g. "65") */
@@ -482,6 +488,8 @@ export interface HitPayRecurringBillingResponse {
   direct_link?: {
     direct_link_url: string;
   };
+  /** Payment instructions (e.g. GIRO bank transfer details) */
+  instructions?: Record<string, string>;
 }
 
 /**
@@ -556,6 +564,9 @@ export async function createRecurringBilling(
   if (data.redirect_url) formData.append('redirect_url', data.redirect_url);
   if (data.reference) formData.append('reference', data.reference);
   if (data.generate_embed) formData.append('generate_embed', 'true');
+  if (data.generate_qr) formData.append('generate_qr', 'true');
+  if (data.generate_direct_link) formData.append('generate_direct_link', 'true');
+  if (data.generate_instructions) formData.append('generate_instructions', 'true');
   if (data.customer_phone_number && data.phone_number_country_code) {
     formData.append('customer_phone_number', data.customer_phone_number);
     formData.append('phone_number_country_code', data.phone_number_country_code);

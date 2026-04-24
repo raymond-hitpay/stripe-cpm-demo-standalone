@@ -109,6 +109,16 @@ export async function POST(request: NextRequest) {
 
     console.log(`[HitPay Recurring] Creating session for ${customerEmail}, method: ${paymentMethod}, subscriptionId: ${subscriptionId}, invoiceId: ${invoiceId}, amount: ${amount} ${currency}`);
 
+    // Pick the method-specific parameter for the inline response type.
+    // See: https://docs.hit-pay.com
+    const DIRECT_LINK_METHODS = ['shopee_recurring', 'grabpay_direct', 'touch_n_go'];
+    const QR_METHODS = ['zalopay'];
+    const INSTRUCTIONS_METHODS = ['giro'];
+
+    const generateDirectLink = DIRECT_LINK_METHODS.includes(paymentMethod);
+    const generateQr = QR_METHODS.includes(paymentMethod);
+    const generateInstructions = INSTRUCTIONS_METHODS.includes(paymentMethod);
+
     // Create HitPay recurring billing session
     const session = await createRecurringBilling({
       name: `Subscription ${subscriptionId}`,
@@ -123,7 +133,9 @@ export async function POST(request: NextRequest) {
       webhook: webhookUrl.toString(),
       redirect_url: redirectUrl.toString(),
       reference: subscriptionId,
-      generate_embed: true,
+      ...(generateDirectLink && { generate_direct_link: true }),
+      ...(generateQr && { generate_qr: true }),
+      ...(generateInstructions && { generate_instructions: true }),
     });
 
     console.log(`[HitPay Recurring] Created session: ${session.id}, url: ${session.url}, status: ${session.status}, direct_link: ${session.direct_link?.direct_link_url || 'none'}`);
@@ -173,6 +185,7 @@ export async function POST(request: NextRequest) {
       redirectUrl: session.url,
       qrCode: session.qr_code_data?.qr_code,
       directLinkUrl: session.direct_link?.direct_link_url,
+      instructions: session.instructions,
       status: session.status,
     });
   } catch (error) {
